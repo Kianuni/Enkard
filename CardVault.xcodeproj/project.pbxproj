@@ -1,0 +1,495 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000012B00000100000001 /* CardVaultApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012B00000100000001 /* CardVaultApp.swift */; };
+		A10000022B00000100000001 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000022B00000100000001 /* ContentView.swift */; };
+		A10000032B00000100000001 /* BankCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000032B00000100000001 /* BankCard.swift */; };
+		A10000042B00000100000001 /* VaultModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000042B00000100000001 /* VaultModels.swift */; };
+		A10000052B00000100000001 /* VaultCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000052B00000100000001 /* VaultCrypto.swift */; };
+		A10000062B00000100000001 /* KeychainBiometrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000062B00000100000001 /* KeychainBiometrics.swift */; };
+		A10000072B00000100000001 /* SecureClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000072B00000100000001 /* SecureClipboard.swift */; };
+		A10000082B00000100000001 /* VaultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000082B00000100000001 /* VaultStore.swift */; };
+		A10000092B00000100000001 /* PrivacyShieldView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000092B00000100000001 /* PrivacyShieldView.swift */; };
+		A100000A2B00000100000001 /* CardVisualView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000A2B00000100000001 /* CardVisualView.swift */; };
+		A100000B2B00000100000001 /* OnboardingSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000B2B00000100000001 /* OnboardingSetupView.swift */; };
+		A100000C2B00000100000001 /* LockScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000C2B00000100000001 /* LockScreenView.swift */; };
+		A100000D2B00000100000001 /* CardListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000D2B00000100000001 /* CardListView.swift */; };
+		A100000E2B00000100000001 /* CardDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000E2B00000100000001 /* CardDetailView.swift */; };
+		A100000F2B00000100000001 /* CardEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000F2B00000100000001 /* CardEditorView.swift */; };
+		A10000102B00000100000001 /* SecuritySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000102B00000100000001 /* SecuritySettingsView.swift */; };
+		A10000112B00000100000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000112B00000100000001 /* Assets.xcassets */; };
+		A10000202B00000100000001 /* VaultCryptoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000202B00000100000001 /* VaultCryptoTests.swift */; };
+		A10000122B00000100000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000132B00000100000001 /* AppDelegate.swift */; };
+		A10000132B00000100000001 /* PrivacyShieldWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000142B00000100000001 /* PrivacyShieldWindow.swift */; };
+		A10000142B00000100000001 /* PasswordPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000152B00000100000001 /* PasswordPolicy.swift */; };
+		A10000152B00000100000001 /* SecureCounters.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000162B00000100000001 /* SecureCounters.swift */; };
+		A10000162B00000100000001 /* SecureDisplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000172B00000100000001 /* SecureDisplay.swift */; };
+		A10000172B00000100000001 /* HardwareKeyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000182B00000100000001 /* HardwareKeyProvider.swift */; };
+		A10000182B00000100000001 /* RuntimeSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000192B00000100000001 /* RuntimeSecurity.swift */; };
+		A10000192B00000100000001 /* NetworkLockdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200001A2B00000100000001 /* NetworkLockdown.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A30000012B00000100000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A80000012B00000100000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A60000012B00000100000001;
+			remoteInfo = CardSe;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A20000012B00000100000001 /* CardVaultApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardVaultApp.swift; sourceTree = "<group>"; };
+		A20000022B00000100000001 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A20000032B00000100000001 /* BankCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BankCard.swift; sourceTree = "<group>"; };
+		A20000042B00000100000001 /* VaultModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultModels.swift; sourceTree = "<group>"; };
+		A20000052B00000100000001 /* VaultCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultCrypto.swift; sourceTree = "<group>"; };
+		A20000062B00000100000001 /* KeychainBiometrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainBiometrics.swift; sourceTree = "<group>"; };
+		A20000072B00000100000001 /* SecureClipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureClipboard.swift; sourceTree = "<group>"; };
+		A20000082B00000100000001 /* VaultStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultStore.swift; sourceTree = "<group>"; };
+		A20000092B00000100000001 /* PrivacyShieldView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyShieldView.swift; sourceTree = "<group>"; };
+		A200000A2B00000100000001 /* CardVisualView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardVisualView.swift; sourceTree = "<group>"; };
+		A200000B2B00000100000001 /* OnboardingSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingSetupView.swift; sourceTree = "<group>"; };
+		A200000C2B00000100000001 /* LockScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockScreenView.swift; sourceTree = "<group>"; };
+		A200000D2B00000100000001 /* CardListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardListView.swift; sourceTree = "<group>"; };
+		A200000E2B00000100000001 /* CardDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardDetailView.swift; sourceTree = "<group>"; };
+		A200000F2B00000100000001 /* CardEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardEditorView.swift; sourceTree = "<group>"; };
+		A20000102B00000100000001 /* SecuritySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecuritySettingsView.swift; sourceTree = "<group>"; };
+		A20000112B00000100000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000122B00000100000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A200001F2B00000100000001 /* CardSe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CardSe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000202B00000100000001 /* VaultCryptoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultCryptoTests.swift; sourceTree = "<group>"; };
+		A200002F2B00000100000001 /* CardVaultTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CardVaultTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000132B00000100000001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		A20000142B00000100000001 /* PrivacyShieldWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyShieldWindow.swift; sourceTree = "<group>"; };
+		A20000152B00000100000001 /* PasswordPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordPolicy.swift; sourceTree = "<group>"; };
+		A20000162B00000100000001 /* SecureCounters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureCounters.swift; sourceTree = "<group>"; };
+		A20000172B00000100000001 /* SecureDisplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureDisplay.swift; sourceTree = "<group>"; };
+		A20000182B00000100000001 /* HardwareKeyProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareKeyProvider.swift; sourceTree = "<group>"; };
+		A20000192B00000100000001 /* RuntimeSecurity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeSecurity.swift; sourceTree = "<group>"; };
+		A200001A2B00000100000001 /* NetworkLockdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkLockdown.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A40000012B00000100000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A40000022B00000100000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A50000012B00000100000001 = {
+			isa = PBXGroup;
+			children = (
+				A50000022B00000100000001 /* CardVault */,
+				A50000092B00000100000001 /* CardVaultTests */,
+				A500000A2B00000100000001 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A50000022B00000100000001 /* CardVault */ = {
+			isa = PBXGroup;
+			children = (
+				A50000032B00000100000001 /* App */,
+				A50000042B00000100000001 /* Models */,
+				A50000052B00000100000001 /* Security */,
+				A50000062B00000100000001 /* Store */,
+				A50000072B00000100000001 /* Views */,
+				A20000112B00000100000001 /* Assets.xcassets */,
+				A20000122B00000100000001 /* Info.plist */,
+			);
+			path = CardVault;
+			sourceTree = "<group>";
+		};
+		A50000032B00000100000001 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A20000142B00000100000001 /* PrivacyShieldWindow.swift */,
+				A20000132B00000100000001 /* AppDelegate.swift */,
+				A20000012B00000100000001 /* CardVaultApp.swift */,
+				A20000022B00000100000001 /* ContentView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		A50000042B00000100000001 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A20000032B00000100000001 /* BankCard.swift */,
+				A20000042B00000100000001 /* VaultModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		A50000052B00000100000001 /* Security */ = {
+			isa = PBXGroup;
+			children = (
+				A20000182B00000100000001 /* HardwareKeyProvider.swift */,
+				A20000192B00000100000001 /* RuntimeSecurity.swift */,
+				A200001A2B00000100000001 /* NetworkLockdown.swift */,
+				A20000152B00000100000001 /* PasswordPolicy.swift */,
+				A20000162B00000100000001 /* SecureCounters.swift */,
+				A20000172B00000100000001 /* SecureDisplay.swift */,
+				A20000052B00000100000001 /* VaultCrypto.swift */,
+				A20000062B00000100000001 /* KeychainBiometrics.swift */,
+				A20000072B00000100000001 /* SecureClipboard.swift */,
+			);
+			path = Security;
+			sourceTree = "<group>";
+		};
+		A50000062B00000100000001 /* Store */ = {
+			isa = PBXGroup;
+			children = (
+				A20000082B00000100000001 /* VaultStore.swift */,
+			);
+			path = Store;
+			sourceTree = "<group>";
+		};
+		A50000072B00000100000001 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A20000092B00000100000001 /* PrivacyShieldView.swift */,
+				A200000A2B00000100000001 /* CardVisualView.swift */,
+				A200000B2B00000100000001 /* OnboardingSetupView.swift */,
+				A200000C2B00000100000001 /* LockScreenView.swift */,
+				A200000D2B00000100000001 /* CardListView.swift */,
+				A200000E2B00000100000001 /* CardDetailView.swift */,
+				A200000F2B00000100000001 /* CardEditorView.swift */,
+				A20000102B00000100000001 /* SecuritySettingsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		A50000092B00000100000001 /* CardVaultTests */ = {
+			isa = PBXGroup;
+			children = (
+				A20000202B00000100000001 /* VaultCryptoTests.swift */,
+			);
+			path = CardVaultTests;
+			sourceTree = "<group>";
+		};
+		A500000A2B00000100000001 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A200001F2B00000100000001 /* CardSe.app */,
+				A200002F2B00000100000001 /* CardVaultTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A60000012B00000100000001 /* CardSe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A90000022B00000100000001 /* Build configuration list for PBXNativeTarget "CardSe" */;
+			buildPhases = (
+				A70000012B00000100000001 /* Sources */,
+				A40000012B00000100000001 /* Frameworks */,
+				A70000022B00000100000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CardSe;
+			productName = CardSe;
+			productReference = A200001F2B00000100000001 /* CardSe.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A60000022B00000100000001 /* CardVaultTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A90000032B00000100000001 /* Build configuration list for PBXNativeTarget "CardVaultTests" */;
+			buildPhases = (
+				A70000032B00000100000001 /* Sources */,
+				A40000022B00000100000001 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A60000032B00000100000001 /* PBXTargetDependency */,
+			);
+			name = CardVaultTests;
+			productName = CardVaultTests;
+			productReference = A200002F2B00000100000001 /* CardVaultTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A80000012B00000100000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					A60000012B00000100000001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					A60000022B00000100000001 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = A60000012B00000100000001;
+					};
+				};
+			};
+			buildConfigurationList = A90000012B00000100000001 /* Build configuration list for PBXProject "CardVault" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = zh_CN;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				zh_CN,
+				Base,
+			);
+			mainGroup = A50000012B00000100000001;
+			productRefGroup = A500000A2B00000100000001 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A60000012B00000100000001 /* CardSe */,
+				A60000022B00000100000001 /* CardVaultTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A70000022B00000100000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000112B00000100000001 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A70000012B00000100000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000172B00000100000001 /* HardwareKeyProvider.swift in Sources */,
+				A10000182B00000100000001 /* RuntimeSecurity.swift in Sources */,
+				A10000192B00000100000001 /* NetworkLockdown.swift in Sources */,
+				A10000162B00000100000001 /* SecureDisplay.swift in Sources */,
+				A10000152B00000100000001 /* SecureCounters.swift in Sources */,
+				A10000142B00000100000001 /* PasswordPolicy.swift in Sources */,
+				A10000132B00000100000001 /* PrivacyShieldWindow.swift in Sources */,
+				A10000122B00000100000001 /* AppDelegate.swift in Sources */,
+				A10000012B00000100000001 /* CardVaultApp.swift in Sources */,
+				A10000022B00000100000001 /* ContentView.swift in Sources */,
+				A10000032B00000100000001 /* BankCard.swift in Sources */,
+				A10000042B00000100000001 /* VaultModels.swift in Sources */,
+				A10000052B00000100000001 /* VaultCrypto.swift in Sources */,
+				A10000062B00000100000001 /* KeychainBiometrics.swift in Sources */,
+				A10000072B00000100000001 /* SecureClipboard.swift in Sources */,
+				A10000082B00000100000001 /* VaultStore.swift in Sources */,
+				A10000092B00000100000001 /* PrivacyShieldView.swift in Sources */,
+				A100000A2B00000100000001 /* CardVisualView.swift in Sources */,
+				A100000B2B00000100000001 /* OnboardingSetupView.swift in Sources */,
+				A100000C2B00000100000001 /* LockScreenView.swift in Sources */,
+				A100000D2B00000100000001 /* CardListView.swift in Sources */,
+				A100000E2B00000100000001 /* CardDetailView.swift in Sources */,
+				A100000F2B00000100000001 /* CardEditorView.swift in Sources */,
+				A10000102B00000100000001 /* SecuritySettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A70000032B00000100000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000202B00000100000001 /* VaultCryptoTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A60000032B00000100000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A60000012B00000100000001 /* CardSe */;
+			targetProxy = A30000012B00000100000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AA0000012B00000100000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		AA0000022B00000100000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEPLOYMENT_POSTPROCESSING = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				STRIP_INSTALLED_PRODUCT = YES;
+				STRIP_STYLE = all;
+				STRIP_SWIFT_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AA0000032B00000100000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				INFOPLIST_FILE = CardVault/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 2.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.local.cardse.app;
+				PRODUCT_NAME = CardSe;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		AA0000042B00000100000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEAD_CODE_STRIPPING = YES;
+				DEPLOYMENT_POSTPROCESSING = YES;
+				INFOPLIST_FILE = CardVault/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 2.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.local.cardse.app;
+				PRODUCT_NAME = CardSe;
+				STRIP_INSTALLED_PRODUCT = YES;
+				STRIP_STYLE = all;
+				STRIP_SWIFT_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		AA0000052B00000100000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 2.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.local.cardse.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CardSe.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CardSe";
+			};
+			name = Debug;
+		};
+		AA0000062B00000100000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 2.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.local.cardse.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CardSe.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CardSe";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A90000012B00000100000001 /* Build configuration list for PBXProject "CardVault" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000012B00000100000001 /* Debug */,
+				AA0000022B00000100000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A90000022B00000100000001 /* Build configuration list for PBXNativeTarget "CardSe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000032B00000100000001 /* Debug */,
+				AA0000042B00000100000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A90000032B00000100000001 /* Build configuration list for PBXNativeTarget "CardVaultTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000052B00000100000001 /* Debug */,
+				AA0000062B00000100000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A80000012B00000100000001 /* Project object */;
+}

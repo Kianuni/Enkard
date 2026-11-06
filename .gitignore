@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+
+# Xcode build & user state
+build/
+DerivedData/
+.build/
+.swiftpm/
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.ipa
+*.dSYM/
+*.dSYM.zip
+
+# Local build outputs
+dist/
+
+# Certificates, provisioning profiles & encrypted vault files (never commit)
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.crt
+*.mobileprovision
+*.provisionprofile
+*.cardse
+*.cardvault

@@ -123,7 +123,7 @@ struct CardVisualView: View {
                         Text("CARDHOLDER")
                             .font(.system(size: 9, weight: .semibold, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.55))
-                        Text(card.cardholderName.isEmpty ? "—" : card.cardholderName.uppercased())
+                        Text(displayedCardholder)
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.92))
                             .lineLimit(1)
@@ -135,7 +135,7 @@ struct CardVisualView: View {
                         Text("VALID THRU")
                             .font(.system(size: 9, weight: .semibold, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.55))
-                        Text(card.formattedExpiry.isEmpty ? "--/--" : card.formattedExpiry)
+                        Text(displayedExpiry)
                             .font(.system(size: 13, weight: .semibold, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.95))
                     }
@@ -171,10 +171,24 @@ struct CardVisualView: View {
     }
 
     private var displayedCardNumber: String {
-        if card.digitsOnly.isEmpty {
+        if forceMasked || card.digitsOnly.isEmpty {
             return "••••  ••••  ••••  ••••"
         }
         return showPlaintext ? card.formattedNumber : card.maskedNumber
+    }
+
+    private var displayedCardholder: String {
+        if forceMasked {
+            return "•••• ••••"
+        }
+        return card.cardholderName.isEmpty ? "—" : card.cardholderName.uppercased()
+    }
+
+    private var displayedExpiry: String {
+        if forceMasked {
+            return "••/••"
+        }
+        return card.formattedExpiry.isEmpty ? "--/--" : card.formattedExpiry
     }
 
     private var displayedCVV: String {

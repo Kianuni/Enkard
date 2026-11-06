@@ -14,6 +14,16 @@ INTEGRITY_FILE="$PROJECT_DIR/dist/CardSe-integrity.sha256"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
+
+# Pre-extraction Zip-Slip path traversal guard
+while IFS= read -r zip_entry; do
+  [[ -z "$zip_entry" ]] && continue
+  if [[ "$zip_entry" == /* || "$zip_entry" == *".."* || "$zip_entry" == -* ]]; then
+    echo "❌ IPA 压缩包内包含危险路径穿越条目：$zip_entry" >&2
+    exit 1
+  fi
+done < <(/usr/bin/unzip -Z1 "$1")
+
 /usr/bin/unzip -q "$1" -d "$WORK_DIR"
 
 if [[ ! -d "$WORK_DIR/Payload" ]]; then
@@ -132,9 +142,26 @@ else
   echo "✅ 符号剥离彻底（LC_SYMTAB 仅 $nsyms 项系统导入桩，纯 Swift 函数符号 0 个，导出符号 $exported_syms 个）"
 fi
 
-echo "== 6. Mach-O 多段只读数据完整性检查 =="
+echo "== 6. Mach-O 全量代码、动态桩与元数据段完整性检查 =="
 if [[ -f "$INTEGRITY_FILE" ]]; then
   sec_mismatch=0
+  verified_count=0
+  expected_sections="$(/usr/bin/awk '{print $1}' "$INTEGRITY_FILE")"
+  actual_sections="$(/usr/bin/otool -l "$BINARY" | /usr/bin/awk '
+    /^[[:space:]]*sectname / { sec=$2 }
+    /^[[:space:]]*segname / && sec != "" {
+      seg=$2
+      if (sec != "__bss" && sec != "__common") {
+        print seg "," sec
+      }
+      sec=""
+    }
+  ')"
+  if [[ "$actual_sections" != "$expected_sections" ]]; then
+    echo "❌ Mach-O 段结构与原始编译产物不一致（疑似新增或篡改段表）"
+    sec_mismatch=1
+    failed=1
+  fi
   while IFS=' ' read -r section expected_hash; do
     [[ -z "$section" ]] && continue
     seg="${section%,*}"
@@ -145,8 +172,9 @@ if [[ -f "$INTEGRITY_FILE" ]]; then
       sec_mismatch=1
       failed=1
     fi
+    verified_count=$((verified_count + 1))
   done < "$INTEGRITY_FILE"
-  [[ $sec_mismatch -eq 0 ]] && echo "✅ __TEXT,__text / __const / __cstring 与原始编译产物 100% 一致"
+  [[ $sec_mismatch -eq 0 ]] && echo "✅ 全部 $verified_count 个 Mach-O 代码/桩函数/常量/元数据段与原始产物 100% 一致"
 else
   echo "⚠️  未找到 $INTEGRITY_FILE，跳过段比对（请先运行 ./scripts/build_ipa.sh）"
   warned=1

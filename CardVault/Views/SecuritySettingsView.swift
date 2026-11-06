@@ -258,6 +258,19 @@ struct SecuritySettingsView: View {
                     dismiss()
                 }
             }
+            .onValueChange(of: store.phase) { newPhase in
+                if newPhase != .unlocked {
+                    exportDocument = nil
+                    pendingImportData = nil
+                    showingExportPasswordPrompt = false
+                    showingFileExporter = false
+                    showingFileImporter = false
+                    showingImportSheet = false
+                    showingChangePassword = false
+                    showingDestroySheet = false
+                    dismiss()
+                }
+            }
         }
     }
 
@@ -303,6 +316,7 @@ private struct ExportBackupPasswordSheet: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+    @State private var currentMasterPassword = ""
     @State private var mode: Mode = .generated
     @State private var generatedPassphrase = PasswordPolicy.generateRecoveryPassphrase()
     @State private var hasRecordedPassphrase = false
@@ -315,17 +329,29 @@ private struct ExportBackupPasswordSheet: View {
     }
 
     private var canExport: Bool {
+        guard !currentMasterPassword.isEmpty else { return false }
         switch mode {
         case .generated:
             return hasRecordedPassphrase
         case .custom:
-            return PasswordPolicy.validationMessage(password, for: .backup) == nil && password == confirmPassword
+            return PasswordPolicy.validationMessage(password, for: .backup) == nil
+                && password == confirmPassword
+                && VaultCrypto.normalizePassword(currentMasterPassword) != VaultCrypto.normalizePassword(password)
         }
     }
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    SecureField("输入当前本机主密码以授权导出", text: $currentMasterPassword)
+                        .lockdownTextInput()
+                } header: {
+                    Text("验证当前本机主密码")
+                } footer: {
+                    Text("导出离线备份会剥离本机安全芯片绑定，因此必须验证主密码（仅凭面容/触控 ID 解锁的会话无法直接导出）。")
+                }
+
                 Section {
                     Picker("保护方式", selection: $mode) {
                         ForEach(Mode.allCases) { item in
@@ -406,10 +432,14 @@ private struct ExportBackupPasswordSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(store.isBusy ? "加密封装中..." : "下一步") {
+                        let curMaster = currentMasterPassword
                         let secret = effectivePassword
                         Task {
                             do {
-                                let data = try await store.createEncryptedBackupData(password: secret)
+                                let data = try await store.createEncryptedBackupData(
+                                    currentMasterPassword: curMaster,
+                                    backupPassword: secret
+                                )
                                 scrubSecrets()
                                 dismiss()
                                 onExportReady(data)
@@ -435,6 +465,7 @@ private struct ExportBackupPasswordSheet: View {
     }
 
     private func scrubSecrets() {
+        currentMasterPassword = ""
         generatedPassphrase = ""
         password = ""
         confirmPassword = ""

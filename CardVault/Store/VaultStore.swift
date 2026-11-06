@@ -384,6 +384,21 @@ final class VaultStore: ObservableObject {
         isBusy = true
         defer { isBusy = false }
 
+        // Fail-Closed on Keychain identity availability & prevent v2 -> v1 downgrade!
+        let identityState = VaultIdentityStore.readState()
+        let allowLegacyV1: Bool
+        switch identityState {
+        case .unavailable:
+            errorMessage = "系统钥匙串防回滚状态暂不可读，请先解锁手机屏幕后再试"
+            return false
+        case .corrupted:
+            allowLegacyV1 = false
+        case .found(let existingIdentity):
+            allowLegacyV1 = existingIdentity.envelopeVersion < VaultEnvelope.currentVersion
+        case .notFound:
+            allowLegacyV1 = true
+        }
+
         let priorFailures = lockout.failures
 
         // Fail-Closed: persist the incremented attempt counter to Keychain BEFORE running PBKDF2!
@@ -392,9 +407,6 @@ final class VaultStore: ObservableObject {
             return false
         }
 
-        // Prevent v2 -> v1 downgrade: if Keychain already recorded a v2 vault, reject v1 envelopes!
-        let existingIdentity = VaultIdentityStore.read()
-        let allowLegacyV1 = (existingIdentity?.envelopeVersion ?? 1) < VaultEnvelope.currentVersion
         let keys = hardwareKeys
 
         do {
@@ -505,12 +517,29 @@ final class VaultStore: ObservableObject {
             return false
         }
 
-        // Prevent v2 -> v1 downgrade on biometric path too.
-        if let recorded = VaultIdentityStore.read(),
-           recorded.envelopeVersion >= VaultEnvelope.currentVersion,
-           envelope.magic != VaultEnvelope.localMagicV2 {
-            errorMessage = "检测到本地加密库版本异常降级，已阻止快捷解锁，请核查安全状态"
+        // Fail-Closed anti-downgrade & anti-rollback verification on biometric quick unlock!
+        let recordedIdentity: VaultIdentityRecord
+        switch VaultIdentityStore.readState() {
+        case .unavailable, .corrupted:
+            errorMessage = "系统钥匙串防回滚状态异常，已暂停快捷解锁，请输入主密码验证"
             return false
+        case .notFound:
+            KeychainBiometrics.deleteBiometricDEK()
+            errorMessage = "未找到本机防回滚身份记录，已暂停快捷解锁，请输入主密码核验"
+            return false
+        case .found(let record):
+            if record.envelopeVersion >= VaultEnvelope.currentVersion,
+               envelope.magic != VaultEnvelope.localMagicV2 {
+                KeychainBiometrics.deleteBiometricDEK()
+                errorMessage = "检测到本地加密库版本异常降级，已阻止快捷解锁，请使用主密码核查安全状态"
+                return false
+            }
+            if let expectedID = record.vaultID, expectedID != envelope.vaultID {
+                KeychainBiometrics.deleteBiometricDEK()
+                errorMessage = "严重警告：检测到本地加密库文件标识异常替换，已禁用快捷解锁，请使用主密码核验"
+                return false
+            }
+            recordedIdentity = record
         }
 
         errorMessage = nil
@@ -524,6 +553,13 @@ final class VaultStore: ObservableObject {
             let payload = try await Task.detached(priority: .userInitiated) {
                 try VaultCrypto.decryptPayload(envelope: envelope, key: key, expectedDomain: .localVault)
             }.value
+
+            // Block biometric auto-unlock if ciphertext generation was rolled back!
+            if payload.generation < recordedIdentity.generation {
+                KeychainBiometrics.deleteBiometricDEK()
+                errorMessage = "严重警告：检测到加密文件版本回滚（第 \(payload.generation) 版旧于钥匙串第 \(recordedIdentity.generation) 版），已禁用快捷解锁，请使用主密码核验"
+                return false
+            }
 
             lockout.reset()
             activateSession(
@@ -591,13 +627,16 @@ final class VaultStore: ObservableObject {
         }
 
         // Anti-replacement & anti-rollback verification against Keychain VaultIdentityStore.
-        if let recorded = VaultIdentityStore.read() {
+        // Never allow `currentGeneration` or Keychain watermark to regress below recorded high-water mark!
+        switch VaultIdentityStore.readState() {
+        case .found(let recorded):
+            currentGeneration = max(payload.generation, recorded.generation)
             if let expectedID = recorded.vaultID, let actualID = envelope.vaultID, expectedID != actualID {
                 notices.append("严重警告：本地加密文件的唯一标识（Vault ID）与本机钥匙串记录不符，文件可能曾被整体替换！")
             } else if payload.generation < recorded.generation {
                 notices.append("严重警告：本地加密文件版本（第 \(payload.generation) 版）旧于本机钥匙串记录（第 \(recorded.generation) 版），疑似遭遇文件回滚攻击！")
             } else {
-                VaultIdentityStore.write(
+                VaultIdentityStore.advanceWatermark(
                     VaultIdentityRecord(
                         vaultID: envelope.vaultID ?? recorded.vaultID,
                         generation: payload.generation,
@@ -605,7 +644,7 @@ final class VaultStore: ObservableObject {
                     )
                 )
             }
-        } else {
+        case .notFound:
             VaultIdentityStore.write(
                 VaultIdentityRecord(
                     vaultID: envelope.vaultID,
@@ -613,6 +652,10 @@ final class VaultStore: ObservableObject {
                     envelopeVersion: envelope.version
                 )
             )
+        case .corrupted:
+            notices.append("严重警告：系统钥匙串中的防回滚身份记录格式异常，疑似曾遭篡改！")
+        case .unavailable:
+            notices.append("安全提醒：系统钥匙串防回滚状态在激活瞬间暂不可读。")
         }
 
         if !notices.isEmpty {
@@ -667,7 +710,7 @@ final class VaultStore: ObservableObject {
             throw VaultCryptoError.authenticationFailed
         }
 
-        let nextGeneration = currentGeneration + 1
+        let nextGeneration = max(currentGeneration, VaultIdentityStore.read()?.generation ?? 0) + 1
         let newEnvelope = try VaultCrypto.resealLocalPayload(
             existingEnvelope: envelope,
             key: key,
@@ -678,7 +721,7 @@ final class VaultStore: ObservableObject {
         try persistEnvelope(newEnvelope)
         currentEnvelope = newEnvelope
         currentGeneration = nextGeneration
-        VaultIdentityStore.write(
+        VaultIdentityStore.advanceWatermark(
             VaultIdentityRecord(
                 vaultID: newEnvelope.vaultID,
                 generation: nextGeneration,
@@ -725,6 +768,62 @@ final class VaultStore: ObservableObject {
         }
     }
 
+    /// Throttled, fail-closed Master Password re-authentication for sensitive unlocked-session operations
+    /// (password rotation & Secure-Enclave-stripping offline backup export).
+    /// Prevents unthrottled password guessing or Face ID opportunistic vault export.
+    private func verifyMasterPasswordReauth(_ candidatePassword: String, against envelope: VaultEnvelope) async -> Bool {
+        let remaining = lockout.remainingSeconds()
+        if remaining > 0 {
+            let msg = Self.lockoutMessage(remaining)
+            lock(reason: .securityAnomaly)
+            errorMessage = msg
+            return false
+        }
+
+        guard lockout.beginAttempt() else {
+            errorMessage = "安全计数器无法写入系统钥匙串，已中止敏感操作验证"
+            return false
+        }
+
+        let keys = hardwareKeys
+        let matched = await Task.detached(priority: .userInitiated) {
+            VaultCrypto.verifyLocalPassword(candidatePassword, against: envelope, hardwareKeys: keys)
+        }.value
+
+        if matched {
+            lockout.reset()
+            return true
+        }
+
+        let failures = lockout.failures
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
+
+        if failures >= LockoutPolicy.biometricSuspensionThreshold {
+            KeychainBiometrics.deleteBiometricDEK()
+        }
+
+        if wipeAfterFailedAttempts && failures >= LockoutPolicy.wipeThreshold {
+            destroyVaultCompletely()
+            errorMessage = "主密码已连续输错 \(failures) 次，已按设置触发硬件密钥销毁并擦除本机卡包。"
+            return false
+        }
+
+        let wait = lockout.remainingSeconds()
+        var message = VaultCryptoError.authenticationFailed.localizedDescription
+        if wait > 0 {
+            message += "\n" + Self.lockoutMessage(wait)
+        } else if failures >= 3 {
+            message += "\n已连续输错 \(failures) 次，第 \(LockoutPolicy.biometricSuspensionThreshold) 次起将强制锁定会话并递增冷却时间"
+        }
+
+        // Kick opportunistic attacker out of unlocked session once brute-force threshold engages!
+        if failures >= LockoutPolicy.biometricSuspensionThreshold || wait > 0 {
+            lock(reason: .securityAnomaly)
+        }
+        errorMessage = message
+        return false
+    }
+
     func changeMasterPassword(currentPassword: String, newPassword: String) async -> Bool {
         if rejectIfDebuggerAttached() { return false }
         guard !isBusy else { return false }
@@ -733,21 +832,22 @@ final class VaultStore: ObservableObject {
             errorMessage = message
             return false
         }
-        guard let envelope = currentEnvelope else { return false }
+        guard phase == .unlocked, let envelope = currentEnvelope else { return false }
 
         isBusy = true
         defer { isBusy = false }
 
+        guard await verifyMasterPasswordReauth(currentPassword, against: envelope) else {
+            return false
+        }
+
         let snapshotCards = cards
-        let nextGeneration = currentGeneration + 1
+        let nextGeneration = max(currentGeneration, VaultIdentityStore.read()?.generation ?? 0) + 1
         let vaultID = envelope.vaultID ?? UUID()
         let keys = hardwareKeys
 
         do {
             let rotated = try await Task.detached(priority: .userInitiated) {
-                guard VaultCrypto.verifyLocalPassword(currentPassword, against: envelope, hardwareKeys: keys) else {
-                    throw VaultCryptoError.authenticationFailed
-                }
                 // Rotate salt, Secure Enclave hardware key, DEK, and KEK simultaneously (2-phase crash-safe commit).
                 return try VaultCrypto.createNewLocalVault(
                     masterPassword: newPassword,
@@ -766,7 +866,7 @@ final class VaultStore: ObservableObject {
             currentEnvelope = rotated.envelope
             activeKey = rotated.key
             currentGeneration = nextGeneration
-            VaultIdentityStore.write(
+            VaultIdentityStore.advanceWatermark(
                 VaultIdentityRecord(
                     vaultID: vaultID,
                     generation: nextGeneration,
@@ -792,15 +892,21 @@ final class VaultStore: ObservableObject {
 
     // MARK: - Encrypted Offline Backup Export / Import
 
-    func createEncryptedBackupData(password: String) async throws -> Data {
+    func createEncryptedBackupData(currentMasterPassword: String, backupPassword: String) async throws -> Data {
         if rejectIfDebuggerAttached() {
             throw VaultCryptoError.authenticationFailed
         }
         guard !isBusy else {
             throw VaultCryptoError.authenticationFailed
         }
-        if let message = PasswordPolicy.validationMessage(password, for: .backup) {
+        if currentMasterPassword.isEmpty {
+            throw VaultCryptoError.weakPassword("请先输入当前本机主密码以授权导出离线备份")
+        }
+        if let message = PasswordPolicy.validationMessage(backupPassword, for: .backup) {
             throw VaultCryptoError.weakPassword(message)
+        }
+        if VaultCrypto.normalizePassword(currentMasterPassword) == VaultCrypto.normalizePassword(backupPassword) {
+            throw VaultCryptoError.weakPassword("备份密码不能与本机主密码相同：备份文件一旦外泄被破解，本机主密码也会随之暴露。")
         }
         guard phase == .unlocked, let envelope = currentEnvelope else {
             throw VaultCryptoError.authenticationFailed
@@ -809,15 +915,15 @@ final class VaultStore: ObservableObject {
         isBusy = true
         defer { isBusy = false }
 
+        guard await verifyMasterPasswordReauth(currentMasterPassword, against: envelope) else {
+            throw VaultCryptoError.weakPassword(errorMessage ?? VaultCryptoError.authenticationFailed.localizedDescription)
+        }
+
         let snapshotCards = cards
-        let keys = hardwareKeys
         return try await Task.detached(priority: .userInitiated) {
-            if VaultCrypto.verifyLocalPassword(password, against: envelope, hardwareKeys: keys) {
-                throw VaultCryptoError.weakPassword("备份密码不能与本机主密码相同：备份文件一旦外泄被破解，本机主密码也会随之暴露。")
-            }
-            return try VaultCrypto.exportEncryptedBackup(
+            try VaultCrypto.exportEncryptedBackup(
                 cards: snapshotCards,
-                backupPassword: password,
+                backupPassword: backupPassword,
                 iterations: VaultCrypto.calibratedIterations()
             )
         }.value

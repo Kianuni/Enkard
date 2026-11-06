@@ -8,6 +8,26 @@ enum KeychainReadResult: Equatable, Sendable {
     case unavailable(OSStatus)
 }
 
+protocol KeychainStateBackend: Sendable {
+    func readResult(_ account: String) -> KeychainReadResult
+    func write(_ data: Data, account: String) -> Bool
+    func delete(_ account: String)
+}
+
+struct SystemKeychainBackend: KeychainStateBackend {
+    func readResult(_ account: String) -> KeychainReadResult {
+        KeychainStateStore.readResult(account)
+    }
+
+    func write(_ data: Data, account: String) -> Bool {
+        KeychainStateStore.write(data, account: account)
+    }
+
+    func delete(_ account: String) {
+        KeychainStateStore.delete(account)
+    }
+}
+
 /// Device-bound, non-synchronizable Keychain state store (`WhenUnlockedThisDeviceOnly`, `Synchronizable = false`).
 /// Never backed up to iCloud Keychain or transferable across devices.
 enum KeychainStateStore {
@@ -48,7 +68,8 @@ enum KeychainStateStore {
             kSecAttrSynchronizable as String: kCFBooleanFalse!
         ]
         let attributesToUpdate: [String: Any] = [
-            kSecValueData as String: data
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
         let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributesToUpdate as CFDictionary)
         if updateStatus == errSecSuccess {
@@ -115,46 +136,95 @@ struct VaultIdentityRecord: Codable, Equatable, Sendable {
     var envelopeVersion: Int
 }
 
+enum VaultIdentityState: Equatable, Sendable {
+    case found(VaultIdentityRecord)
+    case notFound
+    case unavailable
+    case corrupted
+}
+
 enum VaultIdentityStore {
     private static let account = "vault_identity_v2"
     private static let legacyAccount = "vault_generation"
 
-    static func readResult() -> (record: VaultIdentityRecord?, isUnavailable: Bool) {
-        switch KeychainStateStore.readResult(account) {
+    static func readState(using backend: any KeychainStateBackend = SystemKeychainBackend()) -> VaultIdentityState {
+        switch backend.readResult(account) {
         case .found(let data):
             if let decoded = try? JSONDecoder().decode(VaultIdentityRecord.self, from: data) {
-                return (decoded, false)
+                return .found(decoded)
             }
-            return (nil, false)
+            return .corrupted
         case .unavailable:
-            return (nil, true)
+            return .unavailable
         case .notFound:
-            // Migrate v1 generation integer if present.
-            if let legacyData = KeychainStateStore.read(legacyAccount),
-               let text = String(data: legacyData, encoding: .utf8),
-               let gen = UInt64(text) {
-                let migrated = VaultIdentityRecord(vaultID: nil, generation: gen, envelopeVersion: 1)
-                _ = write(migrated)
-                KeychainStateStore.delete(legacyAccount)
-                return (migrated, false)
+            // Migrate v1 generation integer if present, failing closed on transient unavailability.
+            switch backend.readResult(legacyAccount) {
+            case .unavailable:
+                return .unavailable
+            case .found(let legacyData):
+                if let text = String(data: legacyData, encoding: .utf8),
+                   let gen = UInt64(text) {
+                    let migrated = VaultIdentityRecord(vaultID: nil, generation: gen, envelopeVersion: 1)
+                    if write(migrated, using: backend) {
+                        backend.delete(legacyAccount)
+                    }
+                    return .found(migrated)
+                }
+                return .corrupted
+            case .notFound:
+                return .notFound
             }
+        }
+    }
+
+    static func readResult() -> (record: VaultIdentityRecord?, isUnavailable: Bool) {
+        switch readState() {
+        case .found(let record):
+            return (record, false)
+        case .notFound:
             return (nil, false)
+        case .unavailable, .corrupted:
+            return (nil, true)
         }
     }
 
     static func read() -> VaultIdentityRecord? {
-        readResult().record
+        if case .found(let record) = readState() {
+            return record
+        }
+        return nil
     }
 
     @discardableResult
-    static func write(_ record: VaultIdentityRecord) -> Bool {
+    static func write(_ record: VaultIdentityRecord, using backend: any KeychainStateBackend = SystemKeychainBackend()) -> Bool {
         guard let data = try? JSONEncoder().encode(record) else { return false }
-        return KeychainStateStore.write(data, account: account)
+        return backend.write(data, account: account)
     }
 
-    static func clear() {
-        KeychainStateStore.delete(account)
-        KeychainStateStore.delete(legacyAccount)
+    /// Monotonically advances `(generation, envelopeVersion)` without ever regressing an existing watermark.
+    @discardableResult
+    static func advanceWatermark(
+        _ candidate: VaultIdentityRecord,
+        using backend: any KeychainStateBackend = SystemKeychainBackend()
+    ) -> Bool {
+        switch readState(using: backend) {
+        case .unavailable, .corrupted:
+            return false
+        case .notFound:
+            return write(candidate, using: backend)
+        case .found(let existing):
+            let merged = VaultIdentityRecord(
+                vaultID: candidate.vaultID ?? existing.vaultID,
+                generation: max(existing.generation, candidate.generation),
+                envelopeVersion: max(existing.envelopeVersion, candidate.envelopeVersion)
+            )
+            return write(merged, using: backend)
+        }
+    }
+
+    static func clear(using backend: any KeychainStateBackend = SystemKeychainBackend()) {
+        backend.delete(account)
+        backend.delete(legacyAccount)
     }
 }
 
@@ -275,41 +345,81 @@ enum LockoutPolicy {
 @MainActor
 final class LockoutGuard {
     private static let account = "unlock_lockout"
-    private(set) var record: LockoutRecord
+    private let backend: any KeychainStateBackend
+    private(set) var record: LockoutRecord = LockoutRecord()
+    private var hasLoadedAuthoritativeState = false
+    private var isStateUnreadable = false
 
-    init() {
-        if let data = KeychainStateStore.read(Self.account),
-           let decoded = try? JSONDecoder().decode(LockoutRecord.self, from: data) {
-            record = decoded
-        } else {
+    init(backend: any KeychainStateBackend = SystemKeychainBackend()) {
+        self.backend = backend
+        reloadIfNeeded()
+    }
+
+    /// Ensures we never overwrite an existing Keychain lockout/lockdown record if `init()` ran while
+    /// Keychain was momentarily locked (`errSecInteractionNotAllowed`), and fails closed on corruption.
+    private func reloadIfNeeded() {
+        guard !hasLoadedAuthoritativeState else { return }
+        switch backend.readResult(Self.account) {
+        case .found(let data):
+            if let decoded = try? JSONDecoder().decode(LockoutRecord.self, from: data) {
+                record = decoded
+                hasLoadedAuthoritativeState = true
+                isStateUnreadable = false
+            } else {
+                isStateUnreadable = true
+            }
+        case .notFound:
             record = LockoutRecord()
+            hasLoadedAuthoritativeState = true
+            isStateUnreadable = false
+        case .unavailable:
+            isStateUnreadable = true
         }
     }
 
-    var failures: Int { record.failures }
-    var isLockdownActive: Bool { record.isLockdownActive }
+    var failures: Int {
+        reloadIfNeeded()
+        return record.failures
+    }
 
-    /// Biometrics must be suspended once password brute-force throttling engages or Emergency Lockdown is active.
+    var isLockdownActive: Bool {
+        reloadIfNeeded()
+        return record.isLockdownActive
+    }
+
+    /// Biometrics must be suspended once password brute-force throttling engages, Emergency Lockdown is active,
+    /// or Keychain lockout state cannot be authoritatively verified (Fail-Closed).
     var isBiometricSuspended: Bool {
-        record.isLockdownActive
+        reloadIfNeeded()
+        return isStateUnreadable
+            || record.isLockdownActive
             || record.failures >= LockoutPolicy.biometricSuspensionThreshold
             || remainingSeconds() > 0
     }
 
     func remainingSeconds() -> Int {
+        reloadIfNeeded()
         let now = Self.monotonicNow()
         let boot = Self.bootSession()
         let result = LockoutPolicy.remainingSeconds(record: record, nowMonotonicNs: now, currentBootSession: boot)
-        if result.needsRestart {
-            record.lockStartMonotonicNs = now
-            record.bootSession = boot
-            _ = persist()
+        if result.needsRestart && hasLoadedAuthoritativeState {
+            var restarted = record
+            restarted.lockStartMonotonicNs = now
+            restarted.bootSession = boot
+            if persist(restarted) {
+                record = restarted
+            }
         }
         return result.remaining
     }
 
-    /// Counted and persisted *before* the KDF runs (Fail-Closed: returns false if Keychain write fails).
+    /// Counted and persisted *before* the KDF runs (Fail-Closed: returns false if Keychain read/write fails,
+    /// and never overwrites an unreadable Keychain record or mutates memory before Keychain commits).
     func beginAttempt() -> Bool {
+        reloadIfNeeded()
+        guard hasLoadedAuthoritativeState, !isStateUnreadable else {
+            return false
+        }
         var updated = record
         updated.failures = record.failures == Int.max ? Int.max : record.failures + 1
         let seconds = LockoutPolicy.lockoutSeconds(forFailures: updated.failures)
@@ -318,29 +428,44 @@ final class LockoutGuard {
             updated.lockDurationSeconds = seconds
             updated.bootSession = Self.bootSession()
         }
+        guard persist(updated) else {
+            return false
+        }
         record = updated
-        return persist()
+        return true
     }
 
     @discardableResult
     func setLockdownActive(_ active: Bool) -> Bool {
-        record.isLockdownActive = active
-        if !active && record.failures == 0 {
-            KeychainStateStore.delete(Self.account)
-            return true
+        reloadIfNeeded()
+        if !active {
+            guard hasLoadedAuthoritativeState, !isStateUnreadable else { return false }
+            if record.failures == 0 {
+                backend.delete(Self.account)
+                record.isLockdownActive = false
+                return true
+            }
         }
-        return persist()
+        var updated = record
+        updated.isLockdownActive = active
+        guard persist(updated) else { return false }
+        record = updated
+        hasLoadedAuthoritativeState = true
+        isStateUnreadable = false
+        return true
     }
 
     func reset() {
         record = LockoutRecord()
-        KeychainStateStore.delete(Self.account)
+        hasLoadedAuthoritativeState = true
+        isStateUnreadable = false
+        backend.delete(Self.account)
     }
 
     @discardableResult
-    private func persist() -> Bool {
-        guard let data = try? JSONEncoder().encode(record) else { return false }
-        return KeychainStateStore.write(data, account: Self.account)
+    private func persist(_ candidate: LockoutRecord) -> Bool {
+        guard let data = try? JSONEncoder().encode(candidate) else { return false }
+        return backend.write(data, account: Self.account)
     }
 
     /// CLOCK_MONOTONIC on Darwin keeps counting during sleep and ignores wall-clock changes.

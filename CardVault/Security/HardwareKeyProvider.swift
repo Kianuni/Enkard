@@ -236,7 +236,11 @@ struct DeviceHardwareKeyManager: HardwareKeyProvider {
             }
         }
 
-        // Fallback only when Secure Enclave cannot create keys (e.g. unsigned macOS CLI test runner).
+        #if os(iOS) && !targetEnvironment(simulator)
+        // Fail-Closed on physical iPhones/iPads: NEVER silently downgrade from Secure Enclave silicon to software keys.
+        throw HardwareKeyError.keyCreationFailed
+        #else
+        // Software Keychain fallback strictly for Simulator or unsigned macOS CLI test runners without SEP entitlement.
         let fallbackKey = P256.KeyAgreement.PrivateKey()
         var raw = fallbackKey.rawRepresentation
         defer { raw.resetBytes(in: 0..<raw.count) }
@@ -248,6 +252,7 @@ struct DeviceHardwareKeyManager: HardwareKeyProvider {
         ) else {
             throw HardwareKeyError.keyCreationFailed
         }
+        #endif
     }
 
     private func persistToken(

@@ -115,11 +115,14 @@ final class VaultCryptoTests: XCTestCase {
     func testPasswordPolicyBlocksCJKPunctuationBypass() {
         for weak in [
             "12345678", "1234567！", "19900101", "19900101。", "@13812345678!",
-            "abc12345", "P@ssw0rd2026!", "woaini1314", "１２３４５６７８！"
+            "abc12345", "P@ssw0rd2026!", "woaini1314", "１２３４５６７８！",
+            "Ab1!Ab1!", "Ab1!\u{200B}Xy9#", "Ab1!\u{0000}Xy9#"
         ] {
             XCTAssertNotNil(PasswordPolicy.validationMessage(weak, for: .master), "Should reject weak master: \(weak)")
         }
         XCTAssertNotNil(PasswordPolicy.validationMessage("19900101520。", for: .backup))
+        XCTAssertNotNil(PasswordPolicy.validationMessage("Ab1!Ab1!Ab1!", for: .backup))
+        XCTAssertNotNil(PasswordPolicy.validationMessage("!@#19900101$%^", for: .backup))
         XCTAssertNil(PasswordPolicy.validationMessage("mj7#Kq2!vZ", for: .master))
         XCTAssertNil(PasswordPolicy.validationMessage(PasswordPolicy.generateRecoveryPassphrase(), for: .backup))
     }
@@ -144,5 +147,43 @@ final class VaultCryptoTests: XCTestCase {
     func testInitialStorePhaseIsNeutralLoading() {
         let store = VaultStore(hardwareKeys: InMemoryHardwareKeyProvider())
         XCTAssertEqual(store.phase, .loading)
+    }
+
+    @MainActor
+    func testAntiRollbackWatermarkAndFailClosedLockoutGuard() {
+        final class MockBackend: @unchecked Sendable, KeychainStateBackend {
+            var map: [String: Data] = [:]
+            var unavailable = false
+            func readResult(_ account: String) -> KeychainReadResult {
+                if unavailable { return .unavailable(errSecInteractionNotAllowed) }
+                guard let d = map[account] else { return .notFound }
+                return .found(d)
+            }
+            func write(_ data: Data, account: String) -> Bool {
+                if unavailable { return false }
+                map[account] = data
+                return true
+            }
+            func delete(_ account: String) {
+                if !unavailable { map.removeValue(forKey: account) }
+            }
+        }
+
+        let backend = MockBackend()
+        let seed = LockoutGuard(backend: backend)
+        for _ in 0..<8 { XCTAssertTrue(seed.beginAttempt()) }
+
+        backend.unavailable = true
+        let lockedGuard = LockoutGuard(backend: backend)
+        XCTAssertTrue(lockedGuard.isBiometricSuspended)
+        XCTAssertFalse(lockedGuard.beginAttempt())
+
+        backend.unavailable = false
+        XCTAssertEqual(lockedGuard.failures, 8)
+
+        let id = UUID()
+        XCTAssertTrue(VaultIdentityStore.advanceWatermark(VaultIdentityRecord(vaultID: id, generation: 12, envelopeVersion: 2), using: backend))
+        XCTAssertTrue(VaultIdentityStore.advanceWatermark(VaultIdentityRecord(vaultID: id, generation: 4, envelopeVersion: 1), using: backend))
+        XCTAssertEqual(VaultIdentityStore.readState(using: backend), .found(VaultIdentityRecord(vaultID: id, generation: 12, envelopeVersion: 2)))
     }
 }

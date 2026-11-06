@@ -43,6 +43,10 @@ enum PasswordPolicy {
             return "\(name)至少需要 \(minimumLength) 位"
         }
 
+        if containsDisallowedInvisibleOrControlScalar(password) {
+            return "\(name)包含不可见格式字符或控制字符，请手动重新输入可打印字符"
+        }
+
         let assessment = assess(password)
         guard assessment.estimatedBits < minimumBits else { return nil }
 
@@ -58,7 +62,11 @@ enum PasswordPolicy {
     }
 
     static func assess(_ rawPassword: String) -> PasswordAssessment {
-        let password = halfwidthNormalized(VaultCrypto.normalizePassword(rawPassword))
+        let normalizedInput = VaultCrypto.normalizePassword(rawPassword)
+        if containsDisallowedInvisibleOrControlScalar(normalizedInput) {
+            return PasswordAssessment(estimatedBits: 0, warnings: ["包含不可见格式字符或控制字符"])
+        }
+        let password = halfwidthNormalized(normalizedInput)
         guard !password.isEmpty else {
             return PasswordAssessment(estimatedBits: 0, warnings: [])
         }
@@ -117,7 +125,14 @@ enum PasswordPolicy {
         var bits = min(rawBits, uniquenessCap)
         var warnings: [String] = []
 
-        // Dictionary / pinyin / leet / year segmentation model.
+        // LZ77 repeated-block compression cap (defeats `Ab1!Ab1!`, `Ab1!Ab1!Ab1!`, `Q9#Q9#Q9#`).
+        let repeatCheck = repeatedBlockCompressedBits(scalars: scalars, asciiPoolBits: asciiPoolBits)
+        if repeatCheck.hasRepeatedBlock && repeatCheck.bits < bits {
+            bits = repeatCheck.bits
+            warnings.append("包含重复循环片段，实际抗破解强度远低于长度")
+        }
+
+        // Dictionary / pinyin / leet / date / phone / year segmentation model.
         let segmented = segmentedBits(password, asciiPoolBits: asciiPoolBits)
         if segmented.bits < bits {
             bits = segmented.bits
@@ -125,8 +140,13 @@ enum PasswordPolicy {
         if let word = segmented.words.first {
             warnings.append("包含常见单词或拼音（\(word)），字典规则攻击会优先尝试")
         }
-        if segmented.hasYear {
+        if segmented.hasDate {
+            warnings.append("包含完整生日或日期")
+        } else if segmented.hasYear {
             warnings.append("包含年份")
+        }
+        if segmented.hasPhone {
+            warnings.append("包含手机号特征片段")
         }
 
         // Inspect digit core even when wrapped in symbols/punctuation (e.g. `19900101。`, `@13812345678!`).
@@ -237,7 +257,62 @@ enum PasswordPolicy {
         "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s", "!": "i"
     ]
 
-    private static func segmentedBits(_ password: String, asciiPoolBits: Double) -> (bits: Double, words: [String], hasYear: Bool) {
+    private static func containsDisallowedInvisibleOrControlScalar(_ text: String) -> Bool {
+        for scalar in text.unicodeScalars {
+            let v = scalar.value
+            if v < 0x20 || (0x7F...0x9F).contains(v) {
+                return true
+            }
+            if (0x200B...0x200F).contains(v)
+                || (0x202A...0x202E).contains(v)
+                || (0x2060...0x206F).contains(v)
+                || v == 0xFEFF
+                || (0xFFF9...0xFFFB).contains(v)
+                || CharacterSet.controlCharacters.contains(scalar)
+                || CharacterSet.illegalCharacters.contains(scalar) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func repeatedBlockCompressedBits(
+        scalars: [Unicode.Scalar],
+        asciiPoolBits: Double
+    ) -> (bits: Double, hasRepeatedBlock: Bool) {
+        var bits = 0.0
+        var hasRepeated = false
+        var i = 0
+        while i < scalars.count {
+            var bestMatchLen = 0
+            if i >= 3 {
+                let maxCandidate = scalars.count - i
+                for start in 0..<i {
+                    var len = 0
+                    while len < maxCandidate, scalars[start + len] == scalars[i + len] {
+                        len += 1
+                    }
+                    if len > bestMatchLen {
+                        bestMatchLen = len
+                    }
+                }
+            }
+            if bestMatchLen >= 3 {
+                bits += 2.5
+                hasRepeated = true
+                i += bestMatchLen
+            } else {
+                bits += classifyScalar(scalars[i]) == .nonAsciiLetter ? 9.5 : asciiPoolBits
+                i += 1
+            }
+        }
+        return (bits, hasRepeated)
+    }
+
+    private static func segmentedBits(
+        _ password: String,
+        asciiPoolBits: Double
+    ) -> (bits: Double, words: [String], hasYear: Bool, hasDate: Bool, hasPhone: Bool) {
         let original = Array(password)
         let normalized = original.map { char -> Character in
             let lower = Character(char.lowercased())
@@ -248,8 +323,31 @@ enum PasswordPolicy {
         var bits = 0.0
         var words: [String] = []
         var hasYear = false
+        var hasDate = false
+        var hasPhone = false
         var index = 0
         while index < original.count {
+            if index + 11 <= original.count {
+                let sub11 = String(original[index..<(index + 11)])
+                if sub11.allSatisfy(\.isWholeNumber),
+                   sub11.hasPrefix("1"),
+                   let second = sub11.dropFirst().first?.wholeNumberValue,
+                   (3...9).contains(second) {
+                    bits += 25.0
+                    hasPhone = true
+                    index += 11
+                    continue
+                }
+            }
+            if index + 8 <= original.count {
+                let sub8 = String(original[index..<(index + 8)])
+                if sub8.allSatisfy(\.isWholeNumber), looksLikeDate(sub8) {
+                    bits += 14.5
+                    hasDate = true
+                    index += 8
+                    continue
+                }
+            }
             if index + 4 <= original.count,
                let year = Int(String(original[index..<(index + 4)])),
                (1900...2099).contains(year) {
@@ -280,7 +378,7 @@ enum PasswordPolicy {
                 index += 1
             }
         }
-        return (bits, words, hasYear)
+        return (bits, words, hasYear, hasDate, hasPhone)
     }
 
     private static let dictionaryWords: Set<String> = [

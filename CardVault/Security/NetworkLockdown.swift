@@ -3,6 +3,7 @@ import Foundation
 /// Defense-in-depth process-level network kill-switch.
 /// CardSe contains zero networking code, and additionally registers `OfflineKillSwitchURLProtocol`
 /// plus zero-capacity URL caches/cookies so any inadvertent Foundation URL loading immediately fails offline.
+@objc(CardSeOfflineKillSwitchURLProtocol)
 final class OfflineKillSwitchURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool {
         guard let url = request.url else { return true }
@@ -33,7 +34,7 @@ enum NetworkLockdown {
         isActivated = true
 
         URLProtocol.registerClass(OfflineKillSwitchURLProtocol.self)
-        URLCache.shared = URLCache(memoryCapacity: 0, diskCapacity: 0, diskPath: nil)
+        URLCache.shared = URLCache(memoryCapacity: 0, diskCapacity: 0, directory: nil)
         HTTPCookieStorage.shared.cookieAcceptPolicy = .never
     }
 }

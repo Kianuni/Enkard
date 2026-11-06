@@ -112,6 +112,9 @@ enum RuntimeSecurity {
             "/System/Library/",
             "/usr/lib/",
             "/System/Cryptexes/",
+            "/private/preboot/Cryptexes/",
+            "/Preboot/Cryptexes/",
+            "/System/iOSSupport/",
             "/System/DriverKit/",
             "/Library/Apple/"
         ]

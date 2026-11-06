@@ -12,7 +12,7 @@ enum CardFilterCategory: String, CaseIterable, Identifiable {
 }
 
 struct CardListView: View {
-    @Bindable var store: VaultStore
+    @ObservedObject var store: VaultStore
 
     @State private var searchText = ""
     @State private var selectedFilter: CardFilterCategory = .all
@@ -70,8 +70,12 @@ struct CardListView: View {
                             filterChipsBar
 
                             if filteredCards.isEmpty {
-                                ContentUnavailableView.search(text: searchText)
-                                    .padding(.top, 40)
+                                CardSeUnavailableStateView(
+                                    icon: "magnifyingglass",
+                                    title: "无匹配卡片",
+                                    subtitle: searchText.isEmpty ? "当前筛选分类下暂无银行卡" : "未找到包含「\(searchText)」的银行卡"
+                                )
+                                .padding(.top, 40)
                             } else {
                                 LazyVStack(spacing: 20) {
                                     ForEach(filteredCards) { card in
@@ -103,7 +107,7 @@ struct CardListView: View {
             .searchable(text: $searchText, prompt: "搜索银行、别名、尾号、卡组织")
             .lockdownTextInput()
             .toolbar {
-                ToolbarItemGroup(placement: .topBarLeading) {
+                ToolbarItemGroup(placement: .cardSeLeading) {
                     Button {
                         store.lock(reason: .manual)
                     } label: {
@@ -129,7 +133,7 @@ struct CardListView: View {
                     .accessibilityLabel("安全与备份设置")
                 }
 
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .cardSeTrailing) {
                     Button {
                         guard !store.isScreenCaptured else {
                             store.securityNotice = "正在录屏或投屏期间，禁止进入添加或编辑银行卡页面。"
@@ -154,14 +158,14 @@ struct CardListView: View {
             .sheet(isPresented: $showingSettings) {
                 SecuritySettingsView(store: store)
             }
-            .onChange(of: store.phase) { _, newPhase in
+            .onValueChange(of: store.phase) { newPhase in
                 if newPhase != .unlocked {
                     searchText = ""
                     showingAddCard = false
                     showingSettings = false
                 }
             }
-            .onChange(of: store.isScreenCaptured) { _, captured in
+            .onValueChange(of: store.isScreenCaptured) { captured in
                 if captured {
                     showingAddCard = false
                 }
@@ -178,7 +182,7 @@ struct CardListView: View {
                 ForEach(CardFilterCategory.allCases) { category in
                     let isSelected = selectedFilter == category
                     Button {
-                        withAnimation(.snappy(duration: 0.2)) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
                             selectedFilter = category
                         }
                     } label: {

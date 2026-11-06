@@ -36,12 +36,12 @@ final class PrivacyShieldWindowManager {
         observers.append(center.addObserver(
             forName: UIScene.willConnectNotification, object: nil, queue: nil
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshCaptureState() }
+            Self.performOnMain { self?.refreshCaptureState() }
         })
         observers.append(center.addObserver(
             forName: UIScene.didActivateNotification, object: nil, queue: nil
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
+            Self.performOnMain {
                 self?.refreshCaptureState()
                 self?.installActivityMonitorIfNeeded()
             }
@@ -49,17 +49,17 @@ final class PrivacyShieldWindowManager {
         observers.append(center.addObserver(
             forName: UIApplication.willResignActiveNotification, object: nil, queue: nil
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.setReason(.inactive, active: true) }
+            Self.performOnMain { self?.setReason(.inactive, active: true) }
         })
         observers.append(center.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.setReason(.inactive, active: true) }
+            Self.performOnMain { self?.setReason(.inactive, active: true) }
         })
         observers.append(center.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: nil
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
+            Self.performOnMain {
                 self?.setReason(.inactive, active: false)
                 self?.refreshCaptureState()
                 self?.installActivityMonitorIfNeeded()
@@ -68,10 +68,20 @@ final class PrivacyShieldWindowManager {
         observers.append(center.addObserver(
             forName: UIScreen.capturedDidChangeNotification, object: nil, queue: nil
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshCaptureState() }
+            Self.performOnMain { self?.refreshCaptureState() }
         })
 
         refreshCaptureState()
+    }
+
+    /// Executes synchronously when already on the main thread (preserving 0ms snapshot protection),
+    /// and hops safely to the main queue if a system notification ever posts off-main-thread.
+    private nonisolated static func performOnMain(_ block: @escaping @MainActor () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated(block)
+        } else {
+            DispatchQueue.main.async(execute: block)
+        }
     }
 
     func refreshCaptureState() {
@@ -105,7 +115,7 @@ final class PrivacyShieldWindowManager {
             let host = UIHostingController(rootView: PrivacyShieldView(style: style))
             host.view.backgroundColor = .black
             let window = UIWindow(windowScene: scene)
-            window.windowLevel = .statusBar + 100
+            window.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 100)
             window.rootViewController = host
             window.isHidden = false
             shieldWindow = window

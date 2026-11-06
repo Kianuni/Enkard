@@ -1,22 +1,53 @@
 import UIKit
 
-final class AppDelegate: NSObject, UIApplicationDelegate {
+@main
+@objc final class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         NetworkLockdown.activate()
-        configureGlobalInputHygiene()
         PrivacyShieldWindowManager.shared.start()
         return true
     }
 
-    /// Strictest policy: refuse ALL third-party extensions (custom keyboards, share/action extensions, etc.).
+    func application(
+        _ application: UIApplication,
+        configurationForConnecting connectingSceneSession: UISceneSession,
+        options: UIScene.ConnectionOptions
+    ) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(
+            name: "Default Configuration",
+            sessionRole: connectingSceneSession.role
+        )
+        configuration.sceneClass = UIWindowScene.self
+        configuration.delegateClass = SceneDelegate.self
+        return configuration
+    }
+
+    /// Blocks third-party custom keyboards, AutoFill/credential providers, broadcast/screen-sharing,
+    /// and share/action extensions while allowing internal Apple UIKit system scene services.
     func application(
         _ application: UIApplication,
         shouldAllowExtensionPointIdentifier extensionPointIdentifier: UIApplication.ExtensionPointIdentifier
     ) -> Bool {
-        false
+        if extensionPointIdentifier == .keyboard {
+            return false
+        }
+        let raw = extensionPointIdentifier.rawValue.lowercased()
+        if !raw.hasPrefix("com.apple.") {
+            return false
+        }
+        if raw.contains("keyboard")
+            || raw.contains("share")
+            || raw.contains("action")
+            || raw.contains("broadcast")
+            || raw.contains("autofill")
+            || raw.contains("credential")
+            || raw.contains("widget") {
+            return false
+        }
+        return true
     }
 
     /// Refuse Handoff / Continuity / NSUserActivity cross-device synchronization.
@@ -25,19 +56,5 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         willContinueUserActivityWithType userActivityType: String
     ) -> Bool {
         false
-    }
-
-    private func configureGlobalInputHygiene() {
-        UITextField.appearance().autocorrectionType = .no
-        UITextField.appearance().spellCheckingType = .no
-        UITextField.appearance().smartQuotesType = .no
-        UITextField.appearance().smartDashesType = .no
-        UITextField.appearance().smartInsertDeleteType = .no
-
-        UITextView.appearance().autocorrectionType = .no
-        UITextView.appearance().spellCheckingType = .no
-        UITextView.appearance().smartQuotesType = .no
-        UITextView.appearance().smartDashesType = .no
-        UITextView.appearance().smartInsertDeleteType = .no
     }
 }

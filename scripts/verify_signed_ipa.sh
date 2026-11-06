@@ -109,13 +109,14 @@ echo "== 4. Info.plist 断网与隐私配置检查 =="
 file_sharing="$(/usr/libexec/PlistBuddy -c 'Print :UIFileSharingEnabled' "$PLIST" 2>/dev/null || echo 'missing')"
 open_in_place="$(/usr/libexec/PlistBuddy -c 'Print :LSSupportsOpeningDocumentsInPlace' "$PLIST" 2>/dev/null || echo 'missing')"
 ats_arbitrary="$(/usr/libexec/PlistBuddy -c 'Print :NSAppTransportSecurity:NSAllowsArbitraryLoads' "$PLIST" 2>/dev/null || echo 'missing')"
+scene_delegate="$(/usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName' "$PLIST" 2>/dev/null || echo '')"
 url_types="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes' "$PLIST" 2>/dev/null || true)"
 
-if [[ "$file_sharing" != "false" || "$open_in_place" != "false" || "$ats_arbitrary" != "false" || -n "$url_types" ]]; then
-  echo "❌ Info.plist 安全配置被篡改（UIFileSharingEnabled=$file_sharing, OpenInPlace=$open_in_place, ATSArbitrary=$ats_arbitrary）"
+if [[ "$file_sharing" != "false" || "$open_in_place" != "false" || "$ats_arbitrary" != "false" || -z "$scene_delegate" || -n "$url_types" ]]; then
+  echo "❌ Info.plist 安全或生命周期配置异常（UIFileSharingEnabled=$file_sharing, OpenInPlace=$open_in_place, ATSArbitrary=$ats_arbitrary, SceneDelegate=$scene_delegate）"
   failed=1
 else
-  echo "✅ Info.plist 隔离配置完整（禁文件共享、禁明文网络、无外部 URL Scheme）"
+  echo "✅ Info.plist 隔离与 UIScene 生命周期配置完整（SceneDelegate=$scene_delegate）"
 fi
 
 echo "== 5. Mach-O 多段只读数据完整性检查 =="

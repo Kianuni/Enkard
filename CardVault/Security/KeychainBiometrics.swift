@@ -61,10 +61,12 @@ enum KeychainBiometrics {
         guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
             return .none
         }
+        if #available(iOS 17.0, *), context.biometryType == .opticID {
+            return .opticID
+        }
         switch context.biometryType {
         case .faceID: return .faceID
         case .touchID: return .touchID
-        case .opticID: return .opticID
         case .none: return .none
         @unknown default: return .none
         }

@@ -1,21 +1,20 @@
+import Combine
 import Foundation
-import Observation
 import UIKit
 import UniformTypeIdentifiers
 
-@Observable
 @MainActor
-final class SecureClipboard {
+final class SecureClipboard: ObservableObject {
     struct ToastState: Equatable {
         let id: UUID
         let label: String
         var remainingSeconds: Int
     }
 
-    private(set) var activeToast: ToastState?
-    @ObservationIgnored private var countdownTask: Task<Void, Never>?
+    @Published private(set) var activeToast: ToastState?
+    private var countdownTask: Task<Void, Never>?
     /// `changeCount` right after our last write; lets us clear ONLY what we put there.
-    @ObservationIgnored private var ownedChangeCount: Int?
+    private var ownedChangeCount: Int?
 
     func copy(_ text: String, label: String, ttlSeconds: Int) {
         guard !text.isEmpty else { return }

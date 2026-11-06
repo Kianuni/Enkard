@@ -2,14 +2,14 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct OnboardingSetupView: View {
-    @Bindable var store: VaultStore
+    @ObservedObject var store: VaultStore
 
     @State private var masterPassword = ""
     @State private var confirmPassword = ""
     @State private var enableBiometrics = true
 
     @State private var isImportingBackup = false
-    @State private var pendingBackupData: Data?
+    @State private var pendingBackupData: Data? = nil
     @State private var showRestoreSheet = false
 
     var body: some View {
@@ -318,7 +318,7 @@ struct PasswordStrengthIndicator: View {
 }
 
 private struct RestoreFromBackupSheet: View {
-    @Bindable var store: VaultStore
+    @ObservedObject var store: VaultStore
     let backupData: Data
     let enableBiometricsDefault: Bool
 

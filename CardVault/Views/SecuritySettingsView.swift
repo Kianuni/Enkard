@@ -2,22 +2,22 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct SecuritySettingsView: View {
-    @Bindable var store: VaultStore
+    @ObservedObject var store: VaultStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var showingExportPasswordPrompt = false
-    @State private var exportDocument: EncryptedBackupDocument?
+    @State private var exportDocument: EncryptedBackupDocument? = nil
     @State private var showingFileExporter = false
 
     @State private var showingFileImporter = false
-    @State private var pendingImportData: Data?
+    @State private var pendingImportData: Data? = nil
     @State private var showingImportSheet = false
 
     @State private var showingChangePassword = false
     @State private var showingDestroySheet = false
     @State private var showingWipeConfirm = false
 
-    @State private var statusBannerMessage: String?
+    @State private var statusBannerMessage: String? = nil
 
     var body: some View {
         NavigationStack {
@@ -293,7 +293,7 @@ private struct AuditRow: View {
 }
 
 private struct ExportBackupPasswordSheet: View {
-    @Bindable var store: VaultStore
+    @ObservedObject var store: VaultStore
     let onExportReady: (Data) -> Void
 
     enum Mode: String, CaseIterable, Identifiable {
@@ -308,7 +308,7 @@ private struct ExportBackupPasswordSheet: View {
     @State private var hasRecordedPassphrase = false
     @State private var password = ""
     @State private var confirmPassword = ""
-    @State private var errorText: String?
+    @State private var errorText: String? = nil
 
     private var effectivePassword: String {
         mode == .generated ? generatedPassphrase : password
@@ -421,7 +421,7 @@ private struct ExportBackupPasswordSheet: View {
                     .disabled(!canExport || store.isBusy)
                 }
             }
-            .onChange(of: store.screenshotEventCount) { _, _ in
+            .onValueChange(of: store.screenshotEventCount) { _ in
                 if mode == .generated && !SecureCanvasSupport.isAvailable {
                     generatedPassphrase = PasswordPolicy.generateRecoveryPassphrase()
                     hasRecordedPassphrase = false
@@ -442,14 +442,14 @@ private struct ExportBackupPasswordSheet: View {
 }
 
 private struct ImportBackupSheet: View {
-    @Bindable var store: VaultStore
+    @ObservedObject var store: VaultStore
     let data: Data
     let onImported: (Int) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var backupPassword = ""
     @State private var mode: BackupImportMode = .merge
-    @State private var errorText: String?
+    @State private var errorText: String? = nil
 
     var body: some View {
         NavigationStack {
@@ -514,7 +514,7 @@ private struct ImportBackupSheet: View {
 }
 
 private struct ChangeMasterPasswordSheet: View {
-    @Bindable var store: VaultStore
+    @ObservedObject var store: VaultStore
     let onSuccess: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -602,7 +602,7 @@ private struct ChangeMasterPasswordSheet: View {
 }
 
 private struct DestroyVaultConfirmSheet: View {
-    @Bindable var store: VaultStore
+    @ObservedObject var store: VaultStore
     let onDestroyed: () -> Void
 
     @Environment(\.dismiss) private var dismiss

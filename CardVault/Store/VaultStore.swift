@@ -1,11 +1,10 @@
+import Combine
 import CryptoKit
 import Foundation
-import Observation
 import UIKit
 
-@Observable
 @MainActor
-final class VaultStore {
+final class VaultStore: ObservableObject {
     enum Phase: Equatable {
         case onboarding
         case locked
@@ -21,42 +20,43 @@ final class VaultStore {
         case securityAnomaly
     }
 
-    private(set) var phase: Phase = .onboarding
-    private(set) var cards: [BankCard] = []
-    private(set) var isBusy: Bool = false
-    var errorMessage: String?
+    @Published private(set) var phase: Phase = .onboarding
+    @Published private(set) var cards: [BankCard] = []
+    @Published private(set) var isBusy: Bool = false
+    @Published var errorMessage: String?
     /// High-priority security alerts surfaced as a modal (rollback, prior failed attempts, screenshot, iCloud folder warning…).
-    var securityNotice: String?
+    @Published var securityNotice: String?
 
-    private(set) var isAppInactive: Bool = false
-    private(set) var isScreenCaptured: Bool = false
+    @Published private(set) var isAppInactive: Bool = false
+    @Published private(set) var isScreenCaptured: Bool = false
     /// Incremented on every screenshot; views observe it to hide plaintext immediately.
-    private(set) var screenshotEventCount: Int = 0
-    private(set) var runtimeIntegrity: RuntimeIntegrityReport
+    @Published private(set) var screenshotEventCount: Int = 0
+    @Published private(set) var runtimeIntegrity: RuntimeIntegrityReport
 
     let clipboard = SecureClipboard()
-    @ObservationIgnored private let lockout = LockoutGuard()
-    @ObservationIgnored private let hardwareKeys: any HardwareKeyProvider
+    private var clipboardCancellable: AnyCancellable?
+    private lazy var lockout = LockoutGuard()
+    private let hardwareKeys: any HardwareKeyProvider
 
     // MARK: - Device-local non-synced preferences (stored in Keychain `WhenUnlockedThisDeviceOnly`, never backed up)
 
-    var biometricsEnabled: Bool {
+    @Published var biometricsEnabled: Bool {
         didSet { savePreferences() }
     }
 
-    var autoLockTimeout: AutoLockTimeout {
+    @Published var autoLockTimeout: AutoLockTimeout {
         didSet { savePreferences() }
     }
 
-    var idleLockTimeout: IdleLockTimeout {
+    @Published var idleLockTimeout: IdleLockTimeout {
         didSet { savePreferences() }
     }
 
-    var clipboardClearDuration: ClipboardClearDuration {
+    @Published var clipboardClearDuration: ClipboardClearDuration {
         didSet { savePreferences() }
     }
 
-    var wipeAfterFailedAttempts: Bool {
+    @Published var wipeAfterFailedAttempts: Bool {
         didSet { savePreferences() }
     }
 
@@ -64,15 +64,15 @@ final class VaultStore {
 
     private var currentEnvelope: VaultEnvelope?
     /// DEK held as a CryptoKit key: its storage is zeroed on deallocation.
-    @ObservationIgnored private var activeKey: SymmetricKey?
-    @ObservationIgnored private var currentGeneration: UInt64 = 0
-    @ObservationIgnored private var needsReloadWhenProtectedDataAvailable = false
-    @ObservationIgnored private var hasBootstrapped = false
-    @ObservationIgnored private var isLoadingPreferences = false
-    @ObservationIgnored private var backgroundEnteredAt: Date?
-    @ObservationIgnored private var lastActivityAt = Date()
-    @ObservationIgnored private var backgroundLockTask: Task<Void, Never>?
-    @ObservationIgnored private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var activeKey: SymmetricKey?
+    private var currentGeneration: UInt64 = 0
+    private var needsReloadWhenProtectedDataAvailable = false
+    private var hasBootstrapped = false
+    private var isLoadingPreferences = false
+    private var backgroundEnteredAt: Date?
+    private var lastActivityAt = Date()
+    private var backgroundLockTask: Task<Void, Never>?
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
 
     init(hardwareKeys: any HardwareKeyProvider = DeviceHardwareKeyManager()) {
         self.hardwareKeys = hardwareKeys
@@ -82,6 +82,25 @@ final class VaultStore {
         self.idleLockTimeout = .minutes3
         self.clipboardClearDuration = .seconds15
         self.wipeAfterFailedAttempts = false
+        self.clipboardCancellable = clipboard.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+    }
+
+    /// Synchronous 0ms anti-debug check at entry of every key derivation, unlock, rotation, or backup operation.
+    private func rejectIfDebuggerAttached() -> Bool {
+        #if !DEBUG
+        if RuntimeSecurity.isDebuggerAttached() {
+            clipboard.clearIfOwned()
+            KeychainBiometrics.deleteBiometricDEK()
+            lock(reason: .securityAnomaly)
+            let msg = "检测到外部调试器附加，已立即销毁内存会话并拒绝执行敏感密钥操作。"
+            errorMessage = msg
+            securityNotice = msg
+            return true
+        }
+        #endif
+        return false
     }
 
     /// Runs once after `UIApplicationMain` and the active `UIWindowScene` are alive.
@@ -253,6 +272,7 @@ final class VaultStore {
         enableBiometrics: Bool,
         initialCards: [BankCard] = []
     ) async -> Bool {
+        if rejectIfDebuggerAttached() { return false }
         guard !isBusy else { return false }
         errorMessage = nil
         if let message = PasswordPolicy.validationMessage(masterPassword, for: .master) {
@@ -331,6 +351,7 @@ final class VaultStore {
     }
 
     func unlockWithMasterPassword(_ password: String) async -> Bool {
+        if rejectIfDebuggerAttached() { return false }
         guard !isBusy else { return false }
 
         let remaining = lockout.remainingSeconds()
@@ -460,6 +481,7 @@ final class VaultStore {
     }
 
     func unlockWithBiometrics() async -> Bool {
+        if rejectIfDebuggerAttached() { return false }
         guard !isBusy else { return false }
         guard !isBiometricSuspendedBySecurityPolicy else {
             errorMessage = "当前安全策略要求输入主密码解锁"
@@ -694,6 +716,7 @@ final class VaultStore {
     }
 
     func changeMasterPassword(currentPassword: String, newPassword: String) async -> Bool {
+        if rejectIfDebuggerAttached() { return false }
         guard !isBusy else { return false }
         errorMessage = nil
         if let message = PasswordPolicy.validationMessage(newPassword, for: .master) {
@@ -760,6 +783,9 @@ final class VaultStore {
     // MARK: - Encrypted Offline Backup Export / Import
 
     func createEncryptedBackupData(password: String) async throws -> Data {
+        if rejectIfDebuggerAttached() {
+            throw VaultCryptoError.authenticationFailed
+        }
         guard !isBusy else {
             throw VaultCryptoError.authenticationFailed
         }
@@ -792,6 +818,9 @@ final class VaultStore {
         backupPassword: String,
         mode: BackupImportMode
     ) async throws -> Int {
+        if rejectIfDebuggerAttached() {
+            throw VaultCryptoError.authenticationFailed
+        }
         guard !isBusy, phase == .unlocked else {
             throw VaultCryptoError.authenticationFailed
         }
@@ -828,6 +857,7 @@ final class VaultStore {
         newMasterPassword: String,
         enableBiometrics: Bool
     ) async -> Bool {
+        if rejectIfDebuggerAttached() { return false }
         guard !isBusy else { return false }
         errorMessage = nil
 
@@ -989,8 +1019,14 @@ final class VaultStore {
     private func scheduleBackgroundLock(after seconds: Int) {
         cancelBackgroundLock()
         backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "CardSeAutoLock") { [weak self] in
-            MainActor.assumeIsolated {
-                self?.lock(reason: .background)
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    self?.lock(reason: .background)
+                }
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.lock(reason: .background)
+                }
             }
         }
         backgroundLockTask = Task { [weak self] in

@@ -1,14 +1,14 @@
 import SwiftUI
 
 struct CardDetailView: View {
-    @Bindable var store: VaultStore
+    @ObservedObject var store: VaultStore
     let cardID: UUID
 
     @Environment(\.dismiss) private var dismiss
 
     @State private var isRevealed = false
     @State private var revealRemaining = 0
-    @State private var revealTask: Task<Void, Never>?
+    @State private var revealTask: Task<Void, Never>? = nil
 
     @State private var showingEditor = false
     @State private var showingDeleteConfirm = false
@@ -244,7 +244,7 @@ struct CardDetailView: View {
                 .navigationTitle(card.bankName.isEmpty ? "卡片详情" : card.bankName)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
+                    ToolbarItemGroup(placement: .cardSeTrailing) {
                         Button {
                             do {
                                 try store.toggleFavorite(for: card.id)
@@ -287,23 +287,27 @@ struct CardDetailView: View {
                 .onDisappear {
                     hidePlaintextImmediately()
                 }
-                .onChange(of: store.screenshotEventCount) { _, _ in
+                .onValueChange(of: store.screenshotEventCount) { _ in
                     hidePlaintextImmediately()
                 }
-                .onChange(of: store.isScreenCaptured) { _, captured in
+                .onValueChange(of: store.isScreenCaptured) { captured in
                     if captured {
                         hidePlaintextImmediately()
                         showingEditor = false
                     }
                 }
-                .onChange(of: store.phase) { _, newPhase in
+                .onValueChange(of: store.phase) { newPhase in
                     if newPhase != .unlocked {
                         hidePlaintextImmediately()
                         showingEditor = false
                     }
                 }
             } else {
-                ContentUnavailableView("卡片不存在", systemImage: "creditcard.trianglebadge.exclamationmark")
+                CardSeUnavailableStateView(
+                    icon: "creditcard",
+                    title: "卡片不存在",
+                    subtitle: "该银行卡可能已被删除"
+                )
             }
         }
     }

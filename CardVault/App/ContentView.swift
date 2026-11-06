@@ -3,7 +3,7 @@ import SwiftUI
 import UIKit
 
 struct ContentView: View {
-    @Bindable var store: VaultStore
+    @ObservedObject var store: VaultStore
 
     private let idleTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
@@ -30,7 +30,7 @@ struct ContentView: View {
             }
         }
         .disableSystemWritingTools()
-        .animation(.snappy(duration: 0.22), value: store.clipboard.activeToast)
+        .animation(.easeInOut(duration: 0.22), value: store.clipboard.activeToast)
         .alert(
             "CardSe 安全警报",
             isPresented: Binding(

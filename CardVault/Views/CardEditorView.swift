@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct CardEditorView: View {
-    @Bindable var store: VaultStore
+    @ObservedObject var store: VaultStore
     let existingCard: BankCard?
 
     @Environment(\.dismiss) private var dismiss
@@ -23,7 +23,7 @@ struct CardEditorView: View {
 
     /// Controls whether the `.screenshotProtected()` preview card at top displays full card number & CVV.
     @State private var revealInSecurePreview = false
-    @State private var previewRevealTask: Task<Void, Never>?
+    @State private var previewRevealTask: Task<Void, Never>? = nil
 
     @State private var theme: CardTheme = .obsidianGold
     @State private var isFavorite = false
@@ -39,7 +39,7 @@ struct CardEditorView: View {
     @State private var creditLimit = ""
     @State private var notes = ""
 
-    @State private var validationError: String?
+    @State private var validationError: String? = nil
 
     private let commonBanks = [
         "招商银行", "工商银行", "建设银行", "中国银行", "农业银行",
@@ -132,7 +132,7 @@ struct CardEditorView: View {
                             .lockdownTextInput()
                             .focused($cardNumberFocused)
                             .font(.system(.body, design: .monospaced))
-                            .onChange(of: cardNumberDigits) { _, newValue in
+                            .onValueChange(of: cardNumberDigits) { newValue in
                                 let filtered = String(newValue.filter(\.isWholeNumber).prefix(19))
                                 if filtered != newValue {
                                     cardNumberDigits = filtered
@@ -168,7 +168,7 @@ struct CardEditorView: View {
                             .frame(width: 54)
                             .padding(.vertical, 6)
                             .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
-                            .onChange(of: expiryMonth) { _, val in
+                            .onValueChange(of: expiryMonth) { val in
                                 expiryMonth = String(val.filter(\.isWholeNumber).prefix(2))
                             }
 
@@ -183,7 +183,7 @@ struct CardEditorView: View {
                             .frame(width: 54)
                             .padding(.vertical, 6)
                             .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
-                            .onChange(of: expiryYear) { _, val in
+                            .onValueChange(of: expiryYear) { val in
                                 expiryYear = BankCard.normalizeYear(val)
                             }
                     }
@@ -193,7 +193,7 @@ struct CardEditorView: View {
                         .keyboardType(.numberPad)
                         .lockdownTextInput()
                         .font(.system(.body, design: .monospaced))
-                        .onChange(of: cvv) { _, val in
+                        .onValueChange(of: cvv) { val in
                             cvv = String(val.filter(\.isWholeNumber).prefix(4))
                         }
 
@@ -214,7 +214,7 @@ struct CardEditorView: View {
                             Text(net.badgeText).tag(net)
                         }
                     }
-                    .onChange(of: network) { _, _ in
+                    .onValueChange(of: network) { _ in
                         didManuallySelectNetwork = true
                     }
 
@@ -284,7 +284,7 @@ struct CardEditorView: View {
                         SecureField("银行预留手机号后四位", text: $phoneLast4)
                             .keyboardType(.numberPad)
                             .lockdownTextInput()
-                            .onChange(of: phoneLast4) { _, val in
+                            .onValueChange(of: phoneLast4) { val in
                                 phoneLast4 = String(val.filter(\.isWholeNumber).prefix(4))
                             }
 
@@ -344,7 +344,7 @@ struct CardEditorView: View {
             .onDisappear {
                 scrubState()
             }
-            .onChange(of: store.screenshotEventCount) { _, _ in
+            .onValueChange(of: store.screenshotEventCount) { _ in
                 previewRevealTask?.cancel()
                 revealInSecurePreview = false
             }

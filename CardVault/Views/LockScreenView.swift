@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct LockScreenView: View {
-    @Bindable var store: VaultStore
+    @ObservedObject var store: VaultStore
 
     @State private var password = ""
     @State private var didAutoTriggerBiometrics = false

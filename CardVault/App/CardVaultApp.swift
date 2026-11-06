@@ -1,35 +1,38 @@
 import SwiftUI
+import UIKit
 
-@main
-struct CardVaultApp: App {
-    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+/// Explicit `UIWindowSceneDelegate` lifecycle compatible with iOS 16 through iOS 27+ strict scene enforcement.
+final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
 
-    var body: some Scene {
-        WindowGroup {
-            RootBootstrapView()
-        }
+    func scene(
+        _ scene: UIScene,
+        willConnectTo session: UISceneSession,
+        options connectionOptions: UIScene.ConnectionOptions
+    ) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+
+        let rootController = UIHostingController(rootView: RootBootstrapView())
+        rootController.view.backgroundColor = UIColor(red: 0.06, green: 0.07, blue: 0.11, alpha: 1.0)
+
+        let mainWindow = UIWindow(windowScene: windowScene)
+        mainWindow.backgroundColor = UIColor(red: 0.06, green: 0.07, blue: 0.11, alpha: 1.0)
+        mainWindow.rootViewController = rootController
+        self.window = mainWindow
+        mainWindow.makeKeyAndVisible()
+
+        PrivacyShieldWindowManager.shared.refreshCaptureState()
     }
 }
 
-/// Ensures `VaultStore` is only instantiated AFTER `UIApplicationMain` and the `UIWindowScene` are fully initialized.
-private struct RootBootstrapView: View {
-    @State private var store: VaultStore?
+/// Ensures `VaultStore` is only instantiated and bootstrapped AFTER `UIApplicationMain` and `UIWindowScene` are active.
+struct RootBootstrapView: View {
+    @StateObject private var store = VaultStore()
 
     var body: some View {
-        Group {
-            if let store {
-                ContentView(store: store)
-            } else {
-                Color(red: 0.06, green: 0.07, blue: 0.11)
-                    .ignoresSafeArea()
+        ContentView(store: store)
+            .onAppear {
+                store.bootstrapIfNeeded()
             }
-        }
-        .onAppear {
-            if store == nil {
-                let initialized = VaultStore()
-                initialized.bootstrapIfNeeded()
-                store = initialized
-            }
-        }
     }
 }

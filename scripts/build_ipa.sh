@@ -35,8 +35,11 @@ fi
 
 cp -R "$APP_PATH" "$PAYLOAD_DIR/CardSe.app"
 
+echo "==> 预分配 16KB 页对齐 LC_CODE_SIGNATURE 签名槽位（防止第三方自签工具破坏 __LINKEDIT）..."
+/usr/bin/codesign --force --sign - --timestamp=none "$PAYLOAD_DIR/CardSe.app"
+
 echo "==> 记录只读段完整性基线（__TEXT,__text / __const / __cstring）..."
-BINARY="$APP_PATH/CardSe"
+BINARY="$PAYLOAD_DIR/CardSe.app/CardSe"
 {
   for sec in __text __const __cstring; do
     hash="$(/usr/bin/otool -X -s __TEXT "$sec" "$BINARY" | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"

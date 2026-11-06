@@ -35,6 +35,9 @@ fi
 
 cp -R "$APP_PATH" "$PAYLOAD_DIR/CardSe.app"
 
+echo "==> 剥离本地与 Swift 调试符号（保留最小运行时入口）..."
+/usr/bin/xcrun strip -rSTx "$PAYLOAD_DIR/CardSe.app/CardSe"
+
 echo "==> 预分配 16KB 页对齐 LC_CODE_SIGNATURE 签名槽位（防止第三方自签工具破坏 __LINKEDIT）..."
 /usr/bin/codesign --force --sign - --timestamp=none "$PAYLOAD_DIR/CardSe.app"
 

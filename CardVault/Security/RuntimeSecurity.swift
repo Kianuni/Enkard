@@ -2,6 +2,16 @@ import Darwin
 import Foundation
 import MachO
 
+#if !DEBUG
+@_silgen_name("ptrace")
+private func cardse_ptrace(
+    _ request: CInt,
+    _ pid: pid_t,
+    _ addr: UnsafeMutableRawPointer?,
+    _ data: CInt
+) -> CInt
+#endif
+
 struct RuntimeIntegrityReport: Equatable, Sendable {
     let isCompromised: Bool
     let antiDebugActive: Bool
@@ -17,19 +27,31 @@ struct RuntimeIntegrityReport: Equatable, Sendable {
 
     var summaryText: String {
         if !isCompromised {
-            return antiDebugActive ? "正常（调试监控已启用 · 无注入库）" : "正常（调试构建 · 无注入库）"
+            return antiDebugActive ? "正常（内核反调试已启用 · 无注入库）" : "正常（调试构建 · 无注入库）"
         }
         let all = anomalies + unexpectedLibraries.map { "检测到非系统动态库：\($0)" }
         return all.joined(separator: "；")
     }
 }
 
-/// Process-level tamper, dylib-injection, and debugger detection safe for iOS App Sandbox & self-signed deployments.
-/// Note: Never invoke `ptrace(PT_DENY_ATTACH)` on iOS — XNU's iOS Sandbox (`Sandbox.kext`) immediately kills (`SIGKILL`)
-/// sandboxed processes invoking `SYS_ptrace`, and arm64e PAC rejects raw `dlsym` casts. Instead we use read-only
-/// `sysctl(KERN_PROC_PID)` (`P_TRACED`) polling, which is 100% sandbox-safe across all iOS versions.
+/// Process-level tamper, dylib-injection, and kernel anti-debug protection for self-signed iOS deployments.
+/// Combines XNU `PT_DENY_ATTACH` (`P_LNOATTACH`) via a direct Mach-O `dyld` stub (preventing `dlsym` hooks
+/// and `arm64e` PAC pointer-cast traps) with continuous read-only `sysctl(KERN_PROC_PID)` (`P_TRACED`) polling.
 enum RuntimeSecurity {
+    private static let ptDenyAttach: CInt = 31 // PT_DENY_ATTACH in <sys/ptrace.h>
     private static let pTracedFlag: Int32 = 0x00000800 // P_TRACED in <sys/proc.h>
+
+    /// Sets XNU `P_LNOATTACH` on the current process in Release builds, rejecting external `lldb` / `debugserver`
+    /// attachment at the kernel level even when personal self-signing profiles include `get-task-allow=true`.
+    @discardableResult
+    static func enforceReleaseAntiDebug() -> Bool {
+        #if DEBUG
+        return false
+        #else
+        _ = cardse_ptrace(ptDenyAttach, 0, nil, 0)
+        return true
+        #endif
+    }
 
     /// Queries the kernel process table (`KERN_PROC_PID`) for `P_TRACED` (read-only, sandbox-safe).
     static func isDebuggerAttached() -> Bool {
@@ -42,7 +64,7 @@ enum RuntimeSecurity {
     }
 
     /// Inspects loaded Mach-O images, environment variables, and known hook paths using strictly read-only checks.
-    static func auditEnvironment() -> RuntimeIntegrityReport {
+    static func auditEnvironment(antiDebugActive: Bool = false) -> RuntimeIntegrityReport {
         var anomalies: [String] = []
         var unexpectedLibraries: [String] = []
 
@@ -50,10 +72,7 @@ enum RuntimeSecurity {
             anomalies.append("环境变量存在 DYLD_INSERT_LIBRARIES 动态注入")
         }
 
-        #if DEBUG
-        let antiDebugActive = false
-        #else
-        let antiDebugActive = true
+        #if !DEBUG
         if isDebuggerAttached() {
             anomalies.append("检测到调试器附加（P_TRACED）")
         }

@@ -11,6 +11,9 @@ struct ContentView: View {
         ZStack(alignment: .bottom) {
             Group {
                 switch store.phase {
+                case .loading:
+                    Color(red: 0.06, green: 0.07, blue: 0.11)
+                        .ignoresSafeArea()
                 case .onboarding:
                     OnboardingSetupView(store: store)
                 case .locked:

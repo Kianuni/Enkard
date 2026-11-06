@@ -105,21 +105,34 @@ while IFS= read -r rel; do
 done < <(cd "$APP_DIR" && /usr/bin/find . -mindepth 1 | /usr/bin/sed 's|^\./||')
 [[ $extra -eq 0 ]] && echo "✅ 包内无多余 dylib / framework / 插件或隐藏载荷"
 
-echo "== 4. Info.plist 断网与隐私配置检查 =="
+echo "== 4. Info.plist 断网、最小权限与生命周期配置检查 =="
 file_sharing="$(/usr/libexec/PlistBuddy -c 'Print :UIFileSharingEnabled' "$PLIST" 2>/dev/null || echo 'missing')"
 open_in_place="$(/usr/libexec/PlistBuddy -c 'Print :LSSupportsOpeningDocumentsInPlace' "$PLIST" 2>/dev/null || echo 'missing')"
 ats_arbitrary="$(/usr/libexec/PlistBuddy -c 'Print :NSAppTransportSecurity:NSAllowsArbitraryLoads' "$PLIST" 2>/dev/null || echo 'missing')"
 scene_delegate="$(/usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName' "$PLIST" 2>/dev/null || echo '')"
 url_types="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes' "$PLIST" 2>/dev/null || true)"
+camera_usage="$(/usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$PLIST" 2>/dev/null || true)"
+photo_usage="$(/usr/libexec/PlistBuddy -c 'Print :NSPhotoLibraryUsageDescription' "$PLIST" 2>/dev/null || true)"
 
-if [[ "$file_sharing" != "false" || "$open_in_place" != "false" || "$ats_arbitrary" != "false" || -z "$scene_delegate" || -n "$url_types" ]]; then
-  echo "❌ Info.plist 安全或生命周期配置异常（UIFileSharingEnabled=$file_sharing, OpenInPlace=$open_in_place, ATSArbitrary=$ats_arbitrary, SceneDelegate=$scene_delegate）"
+if [[ "$file_sharing" != "false" || "$open_in_place" != "false" || "$ats_arbitrary" != "false" || -z "$scene_delegate" || -n "$url_types" || -n "$camera_usage" || -n "$photo_usage" ]]; then
+  echo "❌ Info.plist 安全、最小权限或生命周期配置异常（UIFileSharingEnabled=$file_sharing, OpenInPlace=$open_in_place, ATSArbitrary=$ats_arbitrary, SceneDelegate=$scene_delegate, Camera=$camera_usage, Photo=$photo_usage）"
   failed=1
 else
-  echo "✅ Info.plist 隔离与 UIScene 生命周期配置完整（SceneDelegate=$scene_delegate）"
+  echo "✅ Info.plist 隔离、零相机/相册权限与 UIScene 生命周期配置完整"
 fi
 
-echo "== 5. Mach-O 多段只读数据完整性检查 =="
+echo "== 5. Mach-O 符号表剥离检查 =="
+nsyms="$(/usr/bin/otool -l "$BINARY" | /usr/bin/awk '/cmd LC_SYMTAB/{f=1; next} f && /nsyms/{print $2; exit}')"
+leaked_swift_syms="$(/usr/bin/nm -U "$BINARY" 2>/dev/null | /usr/bin/grep -vE '(_OBJC_|-\[|\+\[|<redacted)' | /usr/bin/grep -c '6CardSe' || true)"
+exported_syms="$(/usr/bin/nm -gU "$BINARY" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+if [[ -z "$nsyms" || "$nsyms" -gt 500 || "$leaked_swift_syms" -ne 0 || "$exported_syms" -gt 4 ]]; then
+  echo "❌ 二进制符号未彻底剥离（LC_SYMTAB nsyms=$nsyms，残留纯 Swift 符号=$leaked_swift_syms，导出符号=$exported_syms）"
+  failed=1
+else
+  echo "✅ 符号剥离彻底（LC_SYMTAB 仅 $nsyms 项系统导入桩，纯 Swift 函数符号 0 个，导出符号 $exported_syms 个）"
+fi
+
+echo "== 6. Mach-O 多段只读数据完整性检查 =="
 if [[ -f "$INTEGRITY_FILE" ]]; then
   sec_mismatch=0
   while IFS=' ' read -r section expected_hash; do
@@ -139,14 +152,14 @@ else
   warned=1
 fi
 
-echo "== 6. 代码签名与零同步权限（Entitlements）检查 =="
+echo "== 7. 代码签名与零同步权限（Entitlements）检查 =="
 if /usr/bin/codesign --verify --deep --strict "$APP_DIR" 2>/dev/null; then
   echo "✅ codesign 数字签名结构校验通过"
   entitlements="$(/usr/bin/codesign -d --entitlements - --xml "$APP_DIR" 2>/dev/null || true)"
   compact_ent="$(print -r -- "$entitlements" | /usr/bin/tr -d ' \t\n')"
 
   if print -r -- "$compact_ent" | /usr/bin/grep -q '<key>get-task-allow</key><true/>'; then
-    echo "⚠️  get-task-allow = true（个人/开发证书）：CardSe 已在 Release 二进制内置 P_TRACED 调试监控予以缓解，若有条件仍建议优先用 Ad Hoc 描述文件签名。"
+    echo "⚠️  get-task-allow = true（个人/开发证书）：CardSe 已在 Release 二进制内置 PT_DENY_ATTACH 内核反调试 + P_TRACED 持续监控予以缓解，若有条件仍建议优先用 Ad Hoc 描述文件签名。"
     warned=1
   else
     echo "✅ 未开启 get-task-allow"

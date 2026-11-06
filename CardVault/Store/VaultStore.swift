@@ -6,6 +6,7 @@ import UIKit
 @MainActor
 final class VaultStore: ObservableObject {
     enum Phase: Equatable {
+        case loading
         case onboarding
         case locked
         case unlocked
@@ -20,7 +21,7 @@ final class VaultStore: ObservableObject {
         case securityAnomaly
     }
 
-    @Published private(set) var phase: Phase = .onboarding
+    @Published private(set) var phase: Phase = .loading
     @Published private(set) var cards: [BankCard] = []
     @Published private(set) var isBusy: Bool = false
     @Published var errorMessage: String?
@@ -117,7 +118,9 @@ final class VaultStore: ObservableObject {
         wipeAfterFailedAttempts = prefs.wipeAfterFailedAttempts
         isLoadingPreferences = false
 
-        runtimeIntegrity = RuntimeSecurity.auditEnvironment()
+        runtimeIntegrity = RuntimeSecurity.auditEnvironment(
+            antiDebugActive: AppDelegate.antiDebugEnabledAtLaunch
+        )
         migrateLegacyStorageDirectoryIfNeeded()
         refreshScreenCaptureState()
         loadVaultStateFromDisk()
@@ -295,6 +298,13 @@ final class VaultStore: ObservableObject {
         enableBiometrics: Bool,
         initialCards: [BankCard]
     ) async -> Bool {
+        // Hard overwrite guard: NEVER rotate Secure Enclave keys or overwrite an existing vault file on disk.
+        if FileManager.default.fileExists(atPath: vaultFileURL.path) {
+            errorMessage = "检测到本机已存在加密卡包文件，已拒绝覆盖初始化。请先解锁现有卡包。"
+            loadVaultStateFromDisk()
+            return false
+        }
+
         let keys = hardwareKeys
         let vaultID = UUID()
 
@@ -953,7 +963,9 @@ final class VaultStore: ObservableObject {
         bootstrapIfNeeded()
         cancelBackgroundLock()
         refreshScreenCaptureState()
-        runtimeIntegrity = RuntimeSecurity.auditEnvironment()
+        runtimeIntegrity = RuntimeSecurity.auditEnvironment(
+            antiDebugActive: AppDelegate.antiDebugEnabledAtLaunch
+        )
         if needsReloadWhenProtectedDataAvailable {
             loadVaultStateFromDisk()
         }

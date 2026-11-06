@@ -2,10 +2,13 @@ import UIKit
 
 @main
 @objc final class AppDelegate: UIResponder, UIApplicationDelegate {
+    private(set) static var antiDebugEnabledAtLaunch = false
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        Self.antiDebugEnabledAtLaunch = RuntimeSecurity.enforceReleaseAntiDebug()
         NetworkLockdown.activate()
         PrivacyShieldWindowManager.shared.start()
         return true

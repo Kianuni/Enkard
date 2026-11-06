@@ -33,8 +33,6 @@
 		A10000172B00000100000001 /* HardwareKeyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000182B00000100000001 /* HardwareKeyProvider.swift */; };
 		A10000182B00000100000001 /* RuntimeSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000192B00000100000001 /* RuntimeSecurity.swift */; };
 		A10000192B00000100000001 /* NetworkLockdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200001A2B00000100000001 /* NetworkLockdown.swift */; };
-		A100001A2B00000100000001 /* CardOCRParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200001B2B00000100000001 /* CardOCRParser.swift */; };
-		A100001B2B00000100000001 /* CardScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200001C2B00000100000001 /* CardScannerView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -77,8 +75,6 @@
 		A20000182B00000100000001 /* HardwareKeyProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareKeyProvider.swift; sourceTree = "<group>"; };
 		A20000192B00000100000001 /* RuntimeSecurity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeSecurity.swift; sourceTree = "<group>"; };
 		A200001A2B00000100000001 /* NetworkLockdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkLockdown.swift; sourceTree = "<group>"; };
-		A200001B2B00000100000001 /* CardOCRParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardOCRParser.swift; sourceTree = "<group>"; };
-		A200001C2B00000100000001 /* CardScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardScannerView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -154,7 +150,6 @@
 				A20000052B00000100000001 /* VaultCrypto.swift */,
 				A20000062B00000100000001 /* KeychainBiometrics.swift */,
 				A20000072B00000100000001 /* SecureClipboard.swift */,
-				A200001B2B00000100000001 /* CardOCRParser.swift */,
 			);
 			path = Security;
 			sourceTree = "<group>";
@@ -177,7 +172,6 @@
 				A200000D2B00000100000001 /* CardListView.swift */,
 				A200000E2B00000100000001 /* CardDetailView.swift */,
 				A200000F2B00000100000001 /* CardEditorView.swift */,
-				A200001C2B00000100000001 /* CardScannerView.swift */,
 				A20000102B00000100000001 /* SecuritySettingsView.swift */,
 			);
 			path = Views;
@@ -315,8 +309,6 @@
 				A100000D2B00000100000001 /* CardListView.swift in Sources */,
 				A100000E2B00000100000001 /* CardDetailView.swift in Sources */,
 				A100000F2B00000100000001 /* CardEditorView.swift in Sources */,
-				A100001A2B00000100000001 /* CardOCRParser.swift in Sources */,
-				A100001B2B00000100000001 /* CardScannerView.swift in Sources */,
 				A10000102B00000100000001 /* SecuritySettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -370,14 +362,19 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
-				COPY_PHASE_STRIP = NO;
+				COPY_PHASE_STRIP = YES;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEPLOYMENT_POSTPROCESSING = YES;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_NO_COMMON_BLOCKS = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
+				STRIP_INSTALLED_PRODUCT = YES;
+				STRIP_STYLE = all;
+				STRIP_SWIFT_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
@@ -391,14 +388,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				INFOPLIST_FILE = CardVault/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.local.cardse.app;
 				PRODUCT_NAME = CardSe;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -412,17 +409,27 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
+				DEAD_CODE_STRIPPING = YES;
+				DEPLOYMENT_POSTPROCESSING = YES;
 				INFOPLIST_FILE = CardVault/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.1.1;
+				OTHER_SWIFT_FLAGS = (
+					"$(inherited)",
+					"-Xfrontend",
+					"-disable-reflection-names",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.local.cardse.app;
 				PRODUCT_NAME = CardSe;
-				SWIFT_EMIT_LOC_STRINGS = YES;
+				STRIP_INSTALLED_PRODUCT = YES;
+				STRIP_STYLE = all;
+				STRIP_SWIFT_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;

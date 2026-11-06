@@ -4,6 +4,7 @@ import UIKit
 /// Explicit `UIWindowSceneDelegate` lifecycle compatible with iOS 16 through iOS 27+ strict scene enforcement.
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
+    private static var didConfigureInputHygiene = false
 
     func scene(
         _ scene: UIScene,
@@ -11,6 +12,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         options connectionOptions: UIScene.ConnectionOptions
     ) {
         guard let windowScene = scene as? UIWindowScene else { return }
+        Self.configureGlobalInputHygieneOnce()
 
         let rootController = UIHostingController(rootView: RootBootstrapView())
         rootController.view.backgroundColor = UIColor(red: 0.06, green: 0.07, blue: 0.11, alpha: 1.0)
@@ -22,6 +24,25 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         mainWindow.makeKeyAndVisible()
 
         PrivacyShieldWindowManager.shared.refreshCaptureState()
+    }
+
+    private static func configureGlobalInputHygieneOnce() {
+        guard !didConfigureInputHygiene else { return }
+        didConfigureInputHygiene = true
+
+        let textFieldProxy = UITextField.appearance()
+        textFieldProxy.autocorrectionType = .no
+        textFieldProxy.spellCheckingType = .no
+        textFieldProxy.smartQuotesType = .no
+        textFieldProxy.smartDashesType = .no
+        textFieldProxy.smartInsertDeleteType = .no
+
+        let textViewProxy = UITextView.appearance()
+        textViewProxy.autocorrectionType = .no
+        textViewProxy.spellCheckingType = .no
+        textViewProxy.smartQuotesType = .no
+        textViewProxy.smartDashesType = .no
+        textViewProxy.smartInsertDeleteType = .no
     }
 }
 

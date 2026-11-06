@@ -47,7 +47,7 @@ struct LockScreenView: View {
                             )
                     }
 
-                    Text(store.isLockdownModeActive ? "CardSe 紧急锁定中" : "CardSe 已锁定")
+                    Text(store.isLockdownModeActive ? "Enkard 紧急锁定中" : "Enkard 已锁定")
                         .font(.title2.bold())
                         .foregroundStyle(.white)
 

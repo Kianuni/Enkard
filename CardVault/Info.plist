@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleDisplayName</key>
-	<string>CardSe</string>
+	<string>Enkard</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>CardSe</string>
+	<string>Enkard</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
@@ -36,7 +36,7 @@
 		<false/>
 	</dict>
 	<key>NSFaceIDUsageDescription</key>
-	<string>使用面容 ID 快速解锁 CardSe 本地安全芯片加密卡包</string>
+	<string>使用面容 ID 快速解锁 Enkard 本地安全芯片加密卡包</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

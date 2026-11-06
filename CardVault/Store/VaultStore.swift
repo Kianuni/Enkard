@@ -74,6 +74,21 @@ final class VaultStore: ObservableObject {
     private var lastActivityAt = Date()
     private var backgroundLockTask: Task<Void, Never>?
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    /// Incremented on every lock / background / device-lock / wipe. Async unlock, rotation, export and import
+    /// operations capture it before their first `await` and abort if it changed, so an operation that finishes
+    /// after the user locked the phone can never re-populate plaintext or keys into memory.
+    private var sessionEpoch: UInt64 = 0
+    static let maximumImportedCardCount = 1000
+
+    private func bumpSessionEpoch() {
+        sessionEpoch &+= 1
+    }
+
+    private func isSessionStillValid(since epoch: UInt64) -> Bool {
+        sessionEpoch == epoch
+            && UIApplication.shared.applicationState != .background
+            && UIApplication.shared.isProtectedDataAvailable
+    }
 
     init(hardwareKeys: any HardwareKeyProvider = DeviceHardwareKeyManager()) {
         self.hardwareKeys = hardwareKeys
@@ -289,14 +304,16 @@ final class VaultStore: ObservableObject {
         return await performSetupNewVault(
             masterPassword: masterPassword,
             enableBiometrics: enableBiometrics,
-            initialCards: initialCards
+            initialCards: initialCards,
+            startedEpoch: sessionEpoch
         )
     }
 
     private func performSetupNewVault(
         masterPassword: String,
         enableBiometrics: Bool,
-        initialCards: [BankCard]
+        initialCards: [BankCard],
+        startedEpoch: UInt64
     ) async -> Bool {
         // Hard overwrite guard: NEVER rotate Secure Enclave keys or overwrite an existing vault file on disk.
         if FileManager.default.fileExists(atPath: vaultFileURL.path) {
@@ -345,12 +362,15 @@ final class VaultStore: ObservableObject {
                 biometricsEnabled = false
             }
 
-            activateSession(
+            guard activateSession(
                 payload: VaultPlaintextPayload(vaultID: vaultID, generation: 1, cards: initialCards),
                 envelope: result.envelope,
                 key: result.key,
-                priorFailedAttempts: 0
-            )
+                priorFailedAttempts: 0,
+                startedEpoch: startedEpoch
+            ) else {
+                return false
+            }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             return true
         } catch {
@@ -400,6 +420,7 @@ final class VaultStore: ObservableObject {
         }
 
         let priorFailures = lockout.failures
+        let startedEpoch = sessionEpoch
 
         // Fail-Closed: persist the incremented attempt counter to Keychain BEFORE running PBKDF2!
         guard lockout.beginAttempt() else {
@@ -428,7 +449,8 @@ final class VaultStore: ObservableObject {
             // Upgrade legacy v1 or sub-threshold KDF vaults to v2 + Secure Enclave + fresh DEK!
             if unlocked.needsUpgradeToV2 {
                 let upgradedVaultID = envelope.vaultID ?? UUID()
-                let nextGen = max(unlocked.payload.generation, 1)
+                // Always advance past the recorded watermark so the weaker pre-upgrade file can never be replayed.
+                let nextGen = max(unlocked.payload.generation, VaultIdentityStore.read()?.generation ?? 0) + 1
                 let shouldRotateHW = envelope.version < VaultEnvelope.currentVersion
                 do {
                     let upgraded = try await Task.detached(priority: .userInitiated) {
@@ -464,12 +486,15 @@ final class VaultStore: ObservableObject {
                 try? KeychainBiometrics.saveBiometricDEK(finalKey)
             }
 
-            activateSession(
+            guard activateSession(
                 payload: finalPayload,
                 envelope: finalEnvelope,
                 key: finalKey,
-                priorFailedAttempts: priorFailures
-            )
+                priorFailedAttempts: priorFailures,
+                startedEpoch: startedEpoch
+            ) else {
+                return false
+            }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             return true
         } catch {
@@ -547,6 +572,7 @@ final class VaultStore: ObservableObject {
         defer { isBusy = false }
 
         let priorFailures = lockout.failures
+        let startedEpoch = sessionEpoch
 
         do {
             let key = try await KeychainBiometrics.loadBiometricDEK()
@@ -562,12 +588,15 @@ final class VaultStore: ObservableObject {
             }
 
             lockout.reset()
-            activateSession(
+            guard activateSession(
                 payload: payload,
                 envelope: envelope,
                 key: key,
-                priorFailedAttempts: priorFailures
-            )
+                priorFailedAttempts: priorFailures,
+                startedEpoch: startedEpoch
+            ) else {
+                return false
+            }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             return true
         } catch let bioError as KeychainBiometricError {
@@ -583,6 +612,7 @@ final class VaultStore: ObservableObject {
 
     /// 1-Tap Emergency Lockdown ("紧急锁定"): purges biometric DEK from Keychain and requires Master Password next time.
     func enterEmergencyLockdown() {
+        bumpSessionEpoch()
         cancelBackgroundLock()
         clipboard.clearIfOwned()
         KeychainBiometrics.deleteBiometricDEK()
@@ -594,6 +624,7 @@ final class VaultStore: ObservableObject {
     }
 
     func lock(reason: LockReason = .manual) {
+        bumpSessionEpoch()
         cancelBackgroundLock()
         if reason != .background {
             // Unconditionally clear clipboard on manual, idle, deviceLocked, emergencyLockdown, or anomaly!
@@ -606,12 +637,23 @@ final class VaultStore: ObservableObject {
         errorMessage = nil
     }
 
+    /// Activates a decrypted session ONLY if no lock / background / device-lock event happened while the
+    /// caller was awaiting key derivation or Face ID. Returns `false` (and keeps everything wiped) otherwise.
     private func activateSession(
         payload: VaultPlaintextPayload,
         envelope: VaultEnvelope,
         key: SymmetricKey,
-        priorFailedAttempts: Int
-    ) {
+        priorFailedAttempts: Int,
+        startedEpoch: UInt64
+    ) -> Bool {
+        guard isSessionStillValid(since: startedEpoch) else {
+            wipeSensitiveMemory()
+            currentEnvelope = envelope
+            phase = .locked
+            errorMessage = "验证期间应用进入后台或设备已锁屏，已自动中止本次解锁，请重新验证"
+            return false
+        }
+
         activeKey = key
         cards = payload.cards
         currentGeneration = payload.generation
@@ -664,6 +706,7 @@ final class VaultStore: ObservableObject {
 
         lastActivityAt = Date()
         phase = .unlocked
+        return true
     }
 
     private static func lockoutMessage(_ seconds: Int) -> String {
@@ -721,13 +764,15 @@ final class VaultStore: ObservableObject {
         try persistEnvelope(newEnvelope)
         currentEnvelope = newEnvelope
         currentGeneration = nextGeneration
-        VaultIdentityStore.advanceWatermark(
+        if !VaultIdentityStore.advanceWatermark(
             VaultIdentityRecord(
                 vaultID: newEnvelope.vaultID,
                 generation: nextGeneration,
                 envelopeVersion: newEnvelope.version
             )
-        )
+        ) {
+            securityNotice = "安全提醒：卡片已保存，但防回滚版本水位写入系统钥匙串失败，将在下次保存时自动重试。"
+        }
         cards = updatedCards
         noteActivity()
     }
@@ -837,7 +882,12 @@ final class VaultStore: ObservableObject {
         isBusy = true
         defer { isBusy = false }
 
+        let startedEpoch = sessionEpoch
         guard await verifyMasterPasswordReauth(currentPassword, against: envelope) else {
+            return false
+        }
+        guard isSessionStillValid(since: startedEpoch), phase == .unlocked else {
+            errorMessage = "验证期间会话已锁定，主密码未修改"
             return false
         }
 
@@ -861,18 +911,28 @@ final class VaultStore: ObservableObject {
                 )
             }.value
 
+            // M2: if the session was locked while re-encrypting, discard the staged key and keep the old vault intact
+            // (nothing has been written yet), so a fresh DEK is never left resident in memory after a lock.
+            guard isSessionStillValid(since: startedEpoch), phase == .unlocked else {
+                keys.discardPendingKey()
+                errorMessage = "重加密期间会话已锁定，已安全中止，主密码未修改"
+                return false
+            }
+
             try persistEnvelope(rotated.envelope)
             keys.commitRotatedKey()
             currentEnvelope = rotated.envelope
             activeKey = rotated.key
             currentGeneration = nextGeneration
-            VaultIdentityStore.advanceWatermark(
+            if !VaultIdentityStore.advanceWatermark(
                 VaultIdentityRecord(
                     vaultID: vaultID,
                     generation: nextGeneration,
                     envelopeVersion: rotated.envelope.version
                 )
-            )
+            ) {
+                securityNotice = "安全提醒：主密码已更新，但防回滚版本水位写入系统钥匙串失败，将在下次保存时自动重试。"
+            }
 
             if biometricsEnabled && biometricKind != .none && !runtimeIntegrity.isCompromised {
                 do {
@@ -915,18 +975,26 @@ final class VaultStore: ObservableObject {
         isBusy = true
         defer { isBusy = false }
 
+        let startedEpoch = sessionEpoch
         guard await verifyMasterPasswordReauth(currentMasterPassword, against: envelope) else {
             throw VaultCryptoError.weakPassword(errorMessage ?? VaultCryptoError.authenticationFailed.localizedDescription)
         }
+        guard isSessionStillValid(since: startedEpoch), phase == .unlocked else {
+            throw VaultCryptoError.authenticationFailed
+        }
 
         let snapshotCards = cards
-        return try await Task.detached(priority: .userInitiated) {
+        let exported = try await Task.detached(priority: .userInitiated) {
             try VaultCrypto.exportEncryptedBackup(
                 cards: snapshotCards,
                 backupPassword: backupPassword,
                 iterations: VaultCrypto.calibratedIterations()
             )
         }.value
+        guard isSessionStillValid(since: startedEpoch), phase == .unlocked else {
+            throw VaultCryptoError.authenticationFailed
+        }
+        return exported
     }
 
     func importEncryptedBackup(
@@ -942,10 +1010,17 @@ final class VaultStore: ObservableObject {
         }
         isBusy = true
         defer { isBusy = false }
+        let startedEpoch = sessionEpoch
 
-        let importedCards = try await Task.detached(priority: .userInitiated) {
+        let decrypted = try await Task.detached(priority: .userInitiated) {
             try VaultCrypto.importEncryptedBackup(data: data, backupPassword: backupPassword)
         }.value
+        let importedCards = try Self.sanitizeImportedCards(decrypted)
+
+        // The session may have been locked while decrypting: never write a vault built from a wiped `cards` array.
+        guard isSessionStillValid(since: startedEpoch), phase == .unlocked else {
+            throw VaultCryptoError.authenticationFailed
+        }
 
         switch mode {
         case .replace:
@@ -961,6 +1036,9 @@ final class VaultStore: ObservableObject {
                 }
                 merged.append(card)
                 addedCount += 1
+            }
+            guard merged.count <= Self.maximumImportedCardCount * 2 else {
+                throw VaultCryptoError.weakPassword("合并后卡片数量超过安全上限，已拒绝导入")
             }
             try saveCards(merged)
             return addedCount
@@ -988,12 +1066,14 @@ final class VaultStore: ObservableObject {
 
         isBusy = true
         defer { isBusy = false }
+        let startedEpoch = sessionEpoch
 
         let restoredCards: [BankCard]
         do {
-            restoredCards = try await Task.detached(priority: .userInitiated) {
+            let decrypted = try await Task.detached(priority: .userInitiated) {
                 try VaultCrypto.importEncryptedBackup(data: data, backupPassword: backupPassword)
             }.value
+            restoredCards = try Self.sanitizeImportedCards(decrypted)
         } catch {
             errorMessage = error.localizedDescription
             return false
@@ -1002,8 +1082,57 @@ final class VaultStore: ObservableObject {
         return await performSetupNewVault(
             masterPassword: newMasterPassword,
             enableBiometrics: enableBiometrics,
-            initialCards: restoredCards
+            initialCards: restoredCards,
+            startedEpoch: startedEpoch
         )
+    }
+
+    /// Re-validates every imported card through `BankCard.init` (digit filtering / trimming), enforces field
+    /// length caps and a card-count cap, and de-duplicates IDs. Prevents crafted or legacy backups from
+    /// freezing the UI or exhausting memory with oversized fields.
+    static func sanitizeImportedCards(_ input: [BankCard]) throws -> [BankCard] {
+        guard input.count <= maximumImportedCardCount else {
+            throw VaultCryptoError.weakPassword("备份内卡片数量超过 \(maximumImportedCardCount) 张安全上限，已拒绝导入")
+        }
+        func cap(_ value: String, _ limit: Int) -> String {
+            value.count > limit ? String(value.prefix(limit)) : value
+        }
+        func validDay(_ day: Int?) -> Int? {
+            guard let day, (1...31).contains(day) else { return nil }
+            return day
+        }
+        var seenIDs = Set<UUID>()
+        return input.map { raw in
+            var id = raw.id
+            if !seenIDs.insert(id).inserted {
+                id = UUID()
+                seenIDs.insert(id)
+            }
+            return BankCard(
+                id: id,
+                bankName: cap(raw.bankName, 64),
+                nickname: cap(raw.nickname, 64),
+                cardType: raw.cardType,
+                network: raw.network,
+                cardNumber: String(raw.cardNumber.filter(\.isWholeNumber).prefix(19)),
+                cardholderName: cap(raw.cardholderName, 64),
+                expiryMonth: String(raw.expiryMonth.filter(\.isWholeNumber).prefix(2)),
+                expiryYear: String(raw.expiryYear.filter(\.isWholeNumber).prefix(4)),
+                cvv: String(raw.cvv.filter(\.isWholeNumber).prefix(4)),
+                pin: cap(raw.pin, 12),
+                billingAddress: cap(raw.billingAddress, 256),
+                postalCode: cap(raw.postalCode, 16),
+                phoneLast4: raw.phoneLast4,
+                statementDay: validDay(raw.statementDay),
+                dueDay: validDay(raw.dueDay),
+                creditLimit: cap(raw.creditLimit, 32),
+                notes: cap(raw.notes, 2000),
+                theme: raw.theme,
+                isFavorite: raw.isFavorite,
+                createdAt: raw.createdAt,
+                updatedAt: raw.updatedAt
+            )
+        }
     }
 
     /// Inspects a user-picked/exported URL and warns immediately if it resides inside iCloud Drive / Ubiquity sync!
@@ -1015,8 +1144,27 @@ final class VaultStore: ObservableObject {
         }
     }
 
+    /// User-initiated destruction from an unlocked session requires throttled master-password re-authentication,
+    /// so a coerced Face ID unlock cannot be used to shred the vault and its Secure Enclave key.
+    func destroyVaultAfterReauth(masterPassword: String) async -> Bool {
+        if rejectIfDebuggerAttached() { return false }
+        guard !isBusy, phase == .unlocked, let envelope = currentEnvelope else { return false }
+        guard !masterPassword.isEmpty else {
+            errorMessage = "请输入当前主密码授权销毁"
+            return false
+        }
+        errorMessage = nil
+        isBusy = true
+        let verified = await verifyMasterPasswordReauth(masterPassword, against: envelope)
+        isBusy = false
+        guard verified, phase == .unlocked else { return false }
+        destroyVaultCompletely()
+        return true
+    }
+
     /// Cryptographically shreds the Secure Enclave hardware key, biometric key, counters, preferences, and ciphertext file.
     func destroyVaultCompletely() {
+        bumpSessionEpoch()
         cancelBackgroundLock()
         clipboard.clearIfOwned()
         hardwareKeys.destroyKey() // Hardware-level Crypto-Shredding!
@@ -1056,6 +1204,7 @@ final class VaultStore: ObservableObject {
     func handleDidEnterBackground() {
         isAppInactive = true
         backgroundEnteredAt = Date()
+        bumpSessionEpoch()
         guard phase == .unlocked else { return }
 
         if autoLockTimeout == .immediately {
@@ -1107,7 +1256,7 @@ final class VaultStore: ObservableObject {
             clipboard.clearIfOwned()
             KeychainBiometrics.deleteBiometricDEK()
             lock(reason: .securityAnomaly)
-            securityNotice = "检测到外部调试器附加，已立即销毁内存会话并锁定 CardSe。"
+            securityNotice = "检测到外部调试器附加，已立即销毁内存会话并锁定 Enkard。"
             return
         }
         #endif
@@ -1136,7 +1285,7 @@ final class VaultStore: ObservableObject {
 
     private func scheduleBackgroundLock(after seconds: Int) {
         cancelBackgroundLock()
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "CardSeAutoLock") { [weak self] in
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "EnkardAutoLock") { [weak self] in
             if Thread.isMainThread {
                 MainActor.assumeIsolated {
                     self?.lock(reason: .background)

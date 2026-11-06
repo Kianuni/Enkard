@@ -29,7 +29,7 @@ final class SecureClipboard: ObservableObject {
             [item],
             options: [
                 .localOnly: true,           // Never sync via Universal Clipboard / Handoff / Continuity
-                .expirationDate: expiration // OS clears it even if CardSe is killed
+                .expirationDate: expiration // OS clears it even if Enkard is killed
             ]
         )
         ownedChangeCount = UIPasteboard.general.changeCount

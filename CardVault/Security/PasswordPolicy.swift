@@ -418,7 +418,7 @@ enum PasswordPolicy {
         "nothing", "someone", "charlie", "michael", "jordan", "thomas", "robert", "jennifer",
         "jessica", "ashley", "daniel", "andrew", "joshua", "matthew", "david", "james", "john",
         "william", "george", "test", "user", "login", "guest", "iloveyou", "cool", "best", "game",
-        "home", "life", "time", "good", "girl", "boys", "card", "bank", "visa", "cardse",
+        "home", "life", "time", "good", "girl", "boys", "card", "bank", "visa", "cardse", "enkard",
         "woaini", "aini", "wode", "baobei", "laopo", "laogong", "qinai", "xingfu", "kuaile",
         "pingan", "zhongguo", "beijing", "shanghai", "shenzhen", "guangzhou", "zhang", "wang",
         "chen", "yang", "huang", "zhao", "zhou", "xiao", "liang", "ming", "hong", "jian", "yong",

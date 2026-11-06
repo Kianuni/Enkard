@@ -1,6 +1,6 @@
 import CryptoKit
 import XCTest
-@testable import CardSe
+@testable import Enkard
 
 final class VaultCryptoTests: XCTestCase {
     private let iterations = VaultCrypto.minimumNewIterations
@@ -214,5 +214,64 @@ final class VaultCryptoTests: XCTestCase {
     func testCleanRuntimeIntegrityBaseline() {
         let report = RuntimeSecurity.auditEnvironment(antiDebugActive: false)
         XCTAssertFalse(report.isCompromised, "Unexpected compromise on clean test host: \(report.summaryText)")
+    }
+
+    /// Proves the GOT-rebinding detector is actually ACTIVE on this platform (not silently skipped):
+    /// the shared-cache range must exist and contain genuine system functions but not the app image.
+    func testSharedCacheRangeSignalIsActive() throws {
+        typealias RangeFn = @convention(c) (UnsafeMutablePointer<Int>?) -> UnsafeRawPointer?
+        let rtld = UnsafeMutableRawPointer(bitPattern: -2)
+        let sym = try XCTUnwrap(dlsym(rtld, "_dyld_get_shared_cache_range"))
+        var length = 0
+        let start = try XCTUnwrap(unsafeBitCast(sym, to: RangeFn.self)(&length))
+        XCTAssertGreaterThan(length, 0)
+        XCTAssertLessThan(length, 1 << 36, "Range must pass RuntimeSecurity's sanity cap, otherwise the check is skipped")
+        let range = UInt(bitPattern: start)..<(UInt(bitPattern: start) + UInt(length))
+        for name in ["_dyld_get_image_name", "_dyld_get_image_header", "_dyld_image_count", "dladdr", "dlsym",
+                     "getenv", "sysctl", "CCKeyDerivationPBKDF", "SecItemCopyMatching", "SecItemAdd"] {
+            let ptr = try XCTUnwrap(dlsym(rtld, name), name)
+            XCTAssertTrue(range.contains(UInt(bitPattern: ptr)), "\(name) must reside in the shared cache")
+        }
+        XCTAssertFalse(range.contains(UInt(bitPattern: UnsafeRawPointer(#dsohandle))))
+    }
+
+    @MainActor
+    func testImportedBackupCardsAreSanitizedAndBounded() throws {
+        let dupID = UUID()
+        let hostile = BankCard(
+            id: dupID, bankName: String(repeating: "B", count: 10_000), cardNumber: "4111111111111111",
+            cvv: "1234", notes: String(repeating: "N", count: 500_000)
+        )
+        var smuggled = hostile
+        smuggled.cvv = String(repeating: "9", count: 100_000)   // bypasses init filtering, like a decoded JSON payload
+        smuggled.cardNumber = "4111-1111-1111-1111-9999-8888"
+        smuggled.statementDay = 999
+        let sanitized = try VaultStore.sanitizeImportedCards([hostile, smuggled])
+        XCTAssertEqual(sanitized.count, 2)
+        XCTAssertNotEqual(sanitized[0].id, sanitized[1].id, "Duplicate IDs must be re-keyed")
+        XCTAssertLessThanOrEqual(sanitized[1].cvv.count, 4)
+        XCTAssertLessThanOrEqual(sanitized[1].cardNumber.count, 19)
+        XCTAssertLessThanOrEqual(sanitized[0].notes.count, 2000)
+        XCTAssertLessThanOrEqual(sanitized[0].bankName.count, 64)
+        XCTAssertNil(sanitized[1].statementDay)
+
+        let flood = (0...VaultStore.maximumImportedCardCount).map { _ in BankCard(bankName: "X", cardNumber: "4111") }
+        XCTAssertThrowsError(try VaultStore.sanitizeImportedCards(flood))
+    }
+
+    func testBackupFileReadIsBoundedBeforeLoadingIntoMemory() throws {
+        let dir = FileManager.default.temporaryDirectory
+        let big = dir.appendingPathComponent("enkard-oversize-\(UUID().uuidString).enkard")
+        XCTAssertTrue(FileManager.default.createFile(atPath: big.path, contents: nil))
+        let handle = try FileHandle(forWritingTo: big)
+        try handle.truncate(atOffset: UInt64(VaultCrypto.maximumBackupFileByteCount + 1)) // sparse file, no RAM cost
+        try handle.close()
+        defer { try? FileManager.default.removeItem(at: big) }
+        XCTAssertThrowsError(try VaultCrypto.readBackupFileBounded(at: big))
+
+        let small = dir.appendingPathComponent("enkard-small-\(UUID().uuidString).enkard")
+        try Data("{}".utf8).write(to: small)
+        defer { try? FileManager.default.removeItem(at: small) }
+        XCTAssertEqual(try VaultCrypto.readBackupFileBounded(at: small), Data("{}".utf8))
     }
 }

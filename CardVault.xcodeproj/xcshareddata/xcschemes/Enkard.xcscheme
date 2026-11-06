@@ -16,8 +16,8 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A60000012B00000100000001"
-               BuildableName = "CardSe.app"
-               BlueprintName = "CardSe"
+               BuildableName = "Enkard.app"
+               BlueprintName = "Enkard"
                ReferencedContainer = "container:CardVault.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -56,8 +56,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A60000012B00000100000001"
-            BuildableName = "CardSe.app"
-            BlueprintName = "CardSe"
+            BuildableName = "Enkard.app"
+            BlueprintName = "Enkard"
             ReferencedContainer = "container:CardVault.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -73,8 +73,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A60000012B00000100000001"
-            BuildableName = "CardSe.app"
-            BlueprintName = "CardSe"
+            BuildableName = "Enkard.app"
+            BlueprintName = "Enkard"
             ReferencedContainer = "container:CardVault.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

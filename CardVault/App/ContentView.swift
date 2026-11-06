@@ -36,7 +36,7 @@ struct ContentView: View {
         .disableSystemWritingTools()
         .animation(.easeInOut(duration: 0.22), value: store.clipboard.activeToast)
         .alert(
-            "CardSe 安全警报",
+            "Enkard 安全警报",
             isPresented: Binding(
                 get: { store.securityNotice != nil },
                 set: { if !$0 { store.securityNotice = nil } }

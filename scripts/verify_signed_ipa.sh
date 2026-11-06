@@ -1,5 +1,5 @@
 #!/bin/zsh
-# CardSe v2.0 — 签名后 IPA 深度完整性、注入、零同步权限与段哈希检查
+# Enkard v2.0 — 签名后 IPA 深度完整性、注入、零同步权限与段哈希检查
 # 用法：./scripts/verify_signed_ipa.sh /path/to/已签名.ipa
 set -euo pipefail
 
@@ -10,7 +10,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-INTEGRITY_FILE="$PROJECT_DIR/dist/CardSe-integrity.sha256"
+INTEGRITY_FILE="$PROJECT_DIR/dist/Enkard-integrity.sha256"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -133,7 +133,7 @@ fi
 
 echo "== 5. Mach-O 符号表剥离检查 =="
 nsyms="$(/usr/bin/otool -l "$BINARY" | /usr/bin/awk '/cmd LC_SYMTAB/{f=1; next} f && /nsyms/{print $2; exit}')"
-leaked_swift_syms="$(/usr/bin/nm -U "$BINARY" 2>/dev/null | /usr/bin/grep -vE '(_OBJC_|-\[|\+\[|<redacted)' | /usr/bin/grep -c '6CardSe' || true)"
+leaked_swift_syms="$(/usr/bin/nm -U "$BINARY" 2>/dev/null | /usr/bin/grep -vE '(_OBJC_|-\[|\+\[|<redacted)' | /usr/bin/grep -c '6Enkard' || true)"
 exported_syms="$(/usr/bin/nm -gU "$BINARY" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
 if [[ -z "$nsyms" || "$nsyms" -gt 500 || "$leaked_swift_syms" -ne 0 || "$exported_syms" -gt 4 ]]; then
   echo "❌ 二进制符号未彻底剥离（LC_SYMTAB nsyms=$nsyms，残留纯 Swift 符号=$leaked_swift_syms，导出符号=$exported_syms）"
@@ -187,7 +187,7 @@ if /usr/bin/codesign --verify --deep --strict "$APP_DIR" 2>/dev/null; then
   compact_ent="$(print -r -- "$entitlements" | /usr/bin/tr -d ' \t\n')"
 
   if print -r -- "$compact_ent" | /usr/bin/grep -q '<key>get-task-allow</key><true/>'; then
-    echo "⚠️  get-task-allow = true（个人/开发证书）：CardSe 已在 Release 二进制内置 PT_DENY_ATTACH 内核反调试 + P_TRACED 持续监控予以缓解，若有条件仍建议优先用 Ad Hoc 描述文件签名。"
+    echo "⚠️  get-task-allow = true（个人/开发证书）：Enkard 已在 Release 二进制内置 PT_DENY_ATTACH 内核反调试 + P_TRACED 持续监控予以缓解，若有条件仍建议优先用 Ad Hoc 描述文件签名。"
     warned=1
   else
     echo "✅ 未开启 get-task-allow"

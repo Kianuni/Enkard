@@ -70,7 +70,7 @@ struct CardListView: View {
                             filterChipsBar
 
                             if filteredCards.isEmpty {
-                                CardSeUnavailableStateView(
+                                EnkardUnavailableStateView(
                                     icon: "magnifyingglass",
                                     title: "无匹配卡片",
                                     subtitle: searchText.isEmpty ? "当前筛选分类下暂无银行卡" : "未找到包含「\(searchText)」的银行卡"
@@ -103,7 +103,7 @@ struct CardListView: View {
                 }
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("CardSe")
+            .navigationTitle("Enkard")
             .searchable(text: $searchText, prompt: "搜索银行、别名、尾号、卡组织")
             .lockdownTextInput()
             .toolbar {

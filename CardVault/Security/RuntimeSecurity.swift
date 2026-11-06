@@ -1,6 +1,8 @@
+import CommonCrypto
 import Darwin
 import Foundation
 import MachO
+import Security
 
 #if !DEBUG
 @_silgen_name("ptrace")
@@ -170,6 +172,7 @@ enum RuntimeSecurity {
         }
 
         verifyCriticalSymbolOrigins(anomalies: &anomalies)
+        verifyBoundImportPointers(anomalies: &anomalies)
 
         for jbPath in [
             "/var/jb",
@@ -188,6 +191,88 @@ enum RuntimeSecurity {
             unexpectedLibraries: unexpectedLibraries,
             anomalies: anomalies
         )
+    }
+
+    // MARK: - Runtime Import-Table (GOT) Rebinding Detection
+
+    private typealias DyldImageNameFn = @convention(c) (UInt32) -> UnsafePointer<CChar>?
+    private typealias DyldImageHeaderFn = @convention(c) (UInt32) -> UnsafePointer<mach_header>?
+    private typealias DyldImageCountFn = @convention(c) () -> UInt32
+    private typealias DladdrFn = @convention(c) (UnsafeRawPointer?, UnsafeMutablePointer<Dl_info>?) -> Int32
+    private typealias DlsymFn = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?) -> UnsafeMutableRawPointer?
+    private typealias GetenvFn = @convention(c) (UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+    private typealias SysctlFn = @convention(c) (
+        UnsafeMutablePointer<Int32>?, UInt32, UnsafeMutableRawPointer?,
+        UnsafeMutablePointer<Int>?, UnsafeMutableRawPointer?, Int
+    ) -> Int32
+    private typealias PBKDFFn = @convention(c) (
+        CCPBKDFAlgorithm, UnsafePointer<CChar>?, Int, UnsafePointer<UInt8>?, Int,
+        CCPseudoRandomAlgorithm, UInt32, UnsafeMutablePointer<UInt8>?, Int
+    ) -> Int32
+    private typealias SecItemCopyFn = @convention(c) (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
+    private typealias SecItemAddFn = @convention(c) (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
+
+    /// Function pointers loaded through THIS image's own import table (`__DATA_CONST,__got`) — i.e. exactly
+    /// the addresses the app really calls. A fishhook-style injector that rewrites GOT slots changes these values.
+    private static func boundImportPointers() -> [(String, UnsafeRawPointer)] {
+        let imageName: DyldImageNameFn = _dyld_get_image_name
+        let imageHeader: DyldImageHeaderFn = _dyld_get_image_header
+        let imageCount: DyldImageCountFn = _dyld_image_count
+        let dladdrFn: DladdrFn = dladdr
+        let dlsymFn: DlsymFn = dlsym
+        let getenvFn: GetenvFn = getenv
+        let sysctlFn: SysctlFn = sysctl
+        let pbkdfFn: PBKDFFn = CCKeyDerivationPBKDF
+        let secCopyFn: SecItemCopyFn = SecItemCopyMatching
+        let secAddFn: SecItemAddFn = SecItemAdd
+        return [
+            ("_dyld_get_image_name", unsafeBitCast(imageName, to: UnsafeRawPointer.self)),
+            ("_dyld_get_image_header", unsafeBitCast(imageHeader, to: UnsafeRawPointer.self)),
+            ("_dyld_image_count", unsafeBitCast(imageCount, to: UnsafeRawPointer.self)),
+            ("dladdr", unsafeBitCast(dladdrFn, to: UnsafeRawPointer.self)),
+            ("dlsym", unsafeBitCast(dlsymFn, to: UnsafeRawPointer.self)),
+            ("getenv", unsafeBitCast(getenvFn, to: UnsafeRawPointer.self)),
+            ("sysctl", unsafeBitCast(sysctlFn, to: UnsafeRawPointer.self)),
+            ("CCKeyDerivationPBKDF", unsafeBitCast(pbkdfFn, to: UnsafeRawPointer.self)),
+            ("SecItemCopyMatching", unsafeBitCast(secCopyFn, to: UnsafeRawPointer.self)),
+            ("SecItemAdd", unsafeBitCast(secAddFn, to: UnsafeRawPointer.self))
+        ]
+    }
+
+    private typealias SharedCacheRangeFn = @convention(c) (UnsafeMutablePointer<Int>?) -> UnsafeRawPointer?
+
+    /// Every genuine Apple system function (libsystem, libdyld, Security, CommonCrypto…) lives inside the dyld
+    /// shared cache. Hook code from an injected dylib or anonymous executable memory never does. So each pointer
+    /// in our own import table must fall inside the shared-cache address range.
+    private static func verifyBoundImportPointers(anomalies: inout [String]) {
+        guard let cacheRange = sharedCacheAddressRange(anomalies: &anomalies) else { return }
+        for (name, pointer) in boundImportPointers() where !cacheRange.contains(UInt(bitPattern: pointer)) {
+            appendUnique(&anomalies, "检测到关键函数导入表被运行时重绑定（\(name)）")
+        }
+    }
+
+    /// Returns the dyld shared-cache range, or `nil` when unavailable (fail-quiet, no false positives).
+    /// A forged "cover everything" range is rejected because our own executable is never part of the cache.
+    private static func sharedCacheAddressRange(anomalies: inout [String]) -> Range<UInt>? {
+        guard let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2),
+              let symbol = dlsym(rtldDefault, "_dyld_get_shared_cache_range") else {
+            return nil
+        }
+        let rangeFn = unsafeBitCast(symbol, to: SharedCacheRangeFn.self)
+        var length = 0
+        guard let start = rangeFn(&length), length > 0, length < (1 << 36) else {
+            return nil
+        }
+        let lower = UInt(bitPattern: start)
+        let (upper, overflow) = lower.addingReportingOverflow(UInt(length))
+        guard !overflow else { return nil }
+        let range = lower..<upper
+        let ownImage = UInt(bitPattern: UnsafeRawPointer(#dsohandle))
+        if range.contains(ownImage) {
+            appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
+            return nil
+        }
+        return range
     }
 
     // MARK: - Mach-O & Symbol Origin Verification (Read-Only, Bounds-Checked)

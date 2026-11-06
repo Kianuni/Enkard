@@ -1,9 +1,9 @@
 import Foundation
 
 /// Defense-in-depth process-level network kill-switch.
-/// CardSe contains zero networking code, and additionally registers `OfflineKillSwitchURLProtocol`
+/// Enkard contains zero networking code, and additionally registers `OfflineKillSwitchURLProtocol`
 /// plus zero-capacity URL caches/cookies so any inadvertent Foundation URL loading immediately fails offline.
-@objc(CardSeOfflineKillSwitchURLProtocol)
+@objc(EnkardOfflineKillSwitchURLProtocol)
 final class OfflineKillSwitchURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool {
         guard let url = request.url else { return true }

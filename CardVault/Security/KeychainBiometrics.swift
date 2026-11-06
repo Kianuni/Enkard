@@ -124,7 +124,7 @@ enum KeychainBiometrics {
         }
     }
 
-    static func loadBiometricDEK(reason: String = "解锁 CardSe 本地加密银行卡包") async throws -> SymmetricKey {
+    static func loadBiometricDEK(reason: String = "解锁 Enkard 本地加密银行卡包") async throws -> SymmetricKey {
         try await Task.detached(priority: .userInitiated) {
             let context = LAContext()
             context.localizedReason = reason

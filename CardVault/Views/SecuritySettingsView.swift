@@ -50,9 +50,9 @@ struct SecuritySettingsView: View {
                     )
                     AuditRow(icon: "internaldrive.fill", label: "本机存储保护", value: "锁屏销毁内存密钥 · 禁系统备份")
                 } header: {
-                    Text("CardSe 最高安全状态")
+                    Text("Enkard 最高安全状态")
                 } footer: {
-                    Text("双重物理断网建议：您还可以在 iPhone「设置 → App → CardSe → 无线数据」中选择「关闭」，由 iOS 系统内核再加一道零流量防火墙。")
+                    Text("双重物理断网建议：您还可以在 iPhone「设置 → App → Enkard → 无线数据」中选择「关闭」，由 iOS 系统内核再加一道零流量防火墙。")
                 }
 
                 // Biometric & Privacy Controls
@@ -91,9 +91,9 @@ struct SecuritySettingsView: View {
 
                     Button {
                         if store.clipboard.clearIfOwned() {
-                            statusBannerMessage = "已立即清空 CardSe 写入剪贴板的内容"
+                            statusBannerMessage = "已立即清空 Enkard 写入剪贴板的内容"
                         } else {
-                            statusBannerMessage = "剪贴板中当前没有 CardSe 写入的内容"
+                            statusBannerMessage = "剪贴板中当前没有 Enkard 写入的内容"
                         }
                     } label: {
                         Label("立即清空本机剪贴板", systemImage: "scissors")
@@ -145,19 +145,19 @@ struct SecuritySettingsView: View {
                         }
                         showingExportPasswordPrompt = true
                     } label: {
-                        Label("导出离线加密备份 (.cardse)", systemImage: "square.and.arrow.up.fill")
+                        Label("导出离线加密备份 (.enkard)", systemImage: "square.and.arrow.up.fill")
                     }
                     .disabled(store.isScreenCaptured)
 
                     Button {
                         showingFileImporter = true
                     } label: {
-                        Label("导入离线加密备份 (.cardse / .cardvault)", systemImage: "square.and.arrow.down.fill")
+                        Label("导入离线加密备份 (.enkard / .cardse / .cardvault)", systemImage: "square.and.arrow.down.fill")
                     }
                 } header: {
                     Text("纯离线迁移备份（仅换机或重签前使用）")
                 } footer: {
-                    Text("CardSe 严禁任何自动云同步。由于本地加密库绑定了当前手机的安全芯片，换新机前请手动导出备份并保存在「我的 iPhone」本地目录或离线 U 盘中，切勿保存到 iCloud Drive 或网盘。")
+                    Text("Enkard 严禁任何自动云同步。由于本地加密库绑定了当前手机的安全芯片，换新机前请手动导出备份并保存在「我的 iPhone」本地目录或离线 U 盘中，切勿保存到 iCloud Drive 或网盘。")
                 }
 
                 // Master Password Rotation
@@ -172,7 +172,7 @@ struct SecuritySettingsView: View {
                         store.lock(reason: .manual)
                         dismiss()
                     } label: {
-                        Label("立即锁定 CardSe", systemImage: "lock.fill")
+                        Label("立即锁定 Enkard", systemImage: "lock.fill")
                     }
                 }
 
@@ -233,9 +233,11 @@ struct SecuritySettingsView: View {
                     let accessed = url.startAccessingSecurityScopedResource()
                     defer { if accessed { url.stopAccessingSecurityScopedResource() } }
                     store.warnIfCloudSyncedURL(url)
-                    if let data = try? Data(contentsOf: url) {
-                        pendingImportData = data
+                    do {
+                        pendingImportData = try VaultCrypto.readBackupFileBounded(at: url)
                         showingImportSheet = true
+                    } catch {
+                        store.errorMessage = "备份文件无效或超过 \(VaultCrypto.maximumBackupFileByteCount / 1024 / 1024) MB 安全上限"
                     }
                 case .failure(let error):
                     store.errorMessage = error.localizedDescription
@@ -277,7 +279,7 @@ struct SecuritySettingsView: View {
     private func defaultBackupFilename() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmm"
-        return "CardSe-\(formatter.string(from: Date())).cardse"
+        return "Enkard-\(formatter.string(from: Date())).enkard"
     }
 }
 
@@ -638,17 +640,29 @@ private struct DestroyVaultConfirmSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var confirmText = ""
+    @State private var masterPassword = ""
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Text("此操作将销毁本机 Secure Enclave 硬件绑定私钥、生物识别密钥及本地加密数据。若无离线 .cardse 备份，卡片信息将永久无法恢复。")
+                    Text("此操作将销毁本机 Secure Enclave 硬件绑定私钥、生物识别密钥及本地加密数据。若无离线 .enkard 备份，卡片信息将永久无法恢复。")
                         .font(.subheadline)
                         .foregroundStyle(.red)
 
                     TextField("请输入「销毁」两个字确认", text: $confirmText)
                         .lockdownTextInput()
+
+                    SecureField("输入当前主密码授权销毁", text: $masterPassword)
+                        .lockdownTextInput()
+                }
+
+                if let error = store.errorMessage {
+                    Section {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 }
             }
             .navigationTitle("销毁本机卡包")
@@ -657,21 +671,28 @@ private struct DestroyVaultConfirmSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") {
                         confirmText = ""
+                        masterPassword = ""
                         dismiss()
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("永久销毁", role: .destructive) {
-                        confirmText = ""
-                        store.destroyVaultCompletely()
-                        dismiss()
-                        onDestroyed()
+                    Button(store.isBusy ? "验证中..." : "永久销毁", role: .destructive) {
+                        let entered = masterPassword
+                        masterPassword = ""
+                        Task {
+                            if await store.destroyVaultAfterReauth(masterPassword: entered) {
+                                confirmText = ""
+                                dismiss()
+                                onDestroyed()
+                            }
+                        }
                     }
-                    .disabled(confirmText != "销毁")
+                    .disabled(confirmText != "销毁" || masterPassword.isEmpty || store.isBusy)
                 }
             }
             .onDisappear {
                 confirmText = ""
+                masterPassword = ""
             }
         }
     }

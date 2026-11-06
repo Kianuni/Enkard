@@ -52,7 +52,7 @@ struct OnboardingSetupView: View {
                         }
                         .padding(.top, 12)
 
-                        Text("CardSe")
+                        Text("Enkard")
                             .font(.title.bold())
 
                         Text("零网络 · 零云同步 · Secure Enclave 硬件绑定")
@@ -88,7 +88,7 @@ struct OnboardingSetupView: View {
 
                     // Password Setup Card
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("设置 CardSe 主密码")
+                        Text("设置 Enkard 主密码")
                             .font(.headline)
 
                         SecureField("至少 8 位，混合字母、数字与符号（≥40 bit）", text: $masterPassword)
@@ -124,7 +124,7 @@ struct OnboardingSetupView: View {
                             }
                         }
 
-                        Text("注意：CardSe 完全离线且不参与任何云端同步，忘记主密码且无离线备份将永远无法恢复。")
+                        Text("注意：Enkard 完全离线且不参与任何云端同步，忘记主密码且无离线备份将永远无法恢复。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -170,7 +170,7 @@ struct OnboardingSetupView: View {
                         Button {
                             isImportingBackup = true
                         } label: {
-                            Label("从离线加密备份 (.cardse / .cardvault) 恢复", systemImage: "arrow.down.doc.fill")
+                            Label("从离线加密备份 (.enkard / .cardse / .cardvault) 恢复", systemImage: "arrow.down.doc.fill")
                                 .font(.subheadline.weight(.medium))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 10)
@@ -225,7 +225,7 @@ struct OnboardingSetupView: View {
             }
             store.warnIfCloudSyncedURL(url)
             do {
-                pendingBackupData = try Data(contentsOf: url)
+                pendingBackupData = try VaultCrypto.readBackupFileBounded(at: url)
                 showRestoreSheet = true
             } catch {
                 store.errorMessage = "读取备份文件失败：\(error.localizedDescription)"

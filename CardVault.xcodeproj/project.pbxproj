@@ -41,7 +41,7 @@
 			containerPortal = A80000012B00000100000001 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = A60000012B00000100000001;
-			remoteInfo = CardSe;
+			remoteInfo = Enkard;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -64,7 +64,7 @@
 		A20000102B00000100000001 /* SecuritySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecuritySettingsView.swift; sourceTree = "<group>"; };
 		A20000112B00000100000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A20000122B00000100000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		A200001F2B00000100000001 /* CardSe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CardSe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A200001F2B00000100000001 /* Enkard.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Enkard.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000202B00000100000001 /* VaultCryptoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultCryptoTests.swift; sourceTree = "<group>"; };
 		A200002F2B00000100000001 /* CardVaultTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CardVaultTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000132B00000100000001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -188,7 +188,7 @@
 		A500000A2B00000100000001 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A200001F2B00000100000001 /* CardSe.app */,
+				A200001F2B00000100000001 /* Enkard.app */,
 				A200002F2B00000100000001 /* CardVaultTests.xctest */,
 			);
 			name = Products;
@@ -197,9 +197,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A60000012B00000100000001 /* CardSe */ = {
+		A60000012B00000100000001 /* Enkard */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A90000022B00000100000001 /* Build configuration list for PBXNativeTarget "CardSe" */;
+			buildConfigurationList = A90000022B00000100000001 /* Build configuration list for PBXNativeTarget "Enkard" */;
 			buildPhases = (
 				A70000012B00000100000001 /* Sources */,
 				A40000012B00000100000001 /* Frameworks */,
@@ -209,9 +209,9 @@
 			);
 			dependencies = (
 			);
-			name = CardSe;
-			productName = CardSe;
-			productReference = A200001F2B00000100000001 /* CardSe.app */;
+			name = Enkard;
+			productName = Enkard;
+			productReference = A200001F2B00000100000001 /* Enkard.app */;
 			productType = "com.apple.product-type.application";
 		};
 		A60000022B00000100000001 /* CardVaultTests */ = {
@@ -264,7 +264,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				A60000012B00000100000001 /* CardSe */,
+				A60000012B00000100000001 /* Enkard */,
 				A60000022B00000100000001 /* CardVaultTests */,
 			);
 		};
@@ -326,7 +326,7 @@
 /* Begin PBXTargetDependency section */
 		A60000032B00000100000001 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = A60000012B00000100000001 /* CardSe */;
+			target = A60000012B00000100000001 /* Enkard */;
 			targetProxy = A30000012B00000100000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -388,16 +388,16 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				INFOPLIST_FILE = CardVault/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.3;
+				MARKETING_VERSION = 2.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.local.cardse.app;
-				PRODUCT_NAME = CardSe;
+				PRODUCT_NAME = Enkard;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
@@ -409,7 +409,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				DEAD_CODE_STRIPPING = YES;
 				DEPLOYMENT_POSTPROCESSING = YES;
 				INFOPLIST_FILE = CardVault/Info.plist;
@@ -418,14 +418,14 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.3;
+				MARKETING_VERSION = 2.2.0;
 				OTHER_SWIFT_FLAGS = (
 					"$(inherited)",
 					"-Xfrontend",
 					"-disable-reflection-names",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.local.cardse.app;
-				PRODUCT_NAME = CardSe;
+				PRODUCT_NAME = Enkard;
 				STRIP_INSTALLED_PRODUCT = YES;
 				STRIP_STYLE = all;
 				STRIP_SWIFT_SYMBOLS = YES;
@@ -445,7 +445,7 @@
 				MARKETING_VERSION = 2.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.local.cardse.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CardSe.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CardSe";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Enkard.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Enkard";
 			};
 			name = Debug;
 		};
@@ -460,7 +460,7 @@
 				MARKETING_VERSION = 2.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.local.cardse.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CardSe.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CardSe";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Enkard.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Enkard";
 			};
 			name = Release;
 		};
@@ -476,7 +476,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A90000022B00000100000001 /* Build configuration list for PBXNativeTarget "CardSe" */ = {
+		A90000022B00000100000001 /* Build configuration list for PBXNativeTarget "Enkard" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AA0000032B00000100000001 /* Debug */,

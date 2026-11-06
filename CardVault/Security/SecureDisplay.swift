@@ -179,7 +179,7 @@ private struct OnValueChangeModifier<V: Equatable>: ViewModifier {
     }
 }
 
-struct CardSeUnavailableStateView: View {
+struct EnkardUnavailableStateView: View {
     let icon: String
     let title: String
     var subtitle: String = ""

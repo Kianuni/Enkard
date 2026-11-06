@@ -303,7 +303,7 @@ struct CardDetailView: View {
                     }
                 }
             } else {
-                CardSeUnavailableStateView(
+                EnkardUnavailableStateView(
                     icon: "creditcard",
                     title: "卡片不存在",
                     subtitle: "该银行卡可能已被删除"

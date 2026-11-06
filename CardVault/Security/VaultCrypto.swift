@@ -69,6 +69,24 @@ enum VaultCrypto {
     private static let wrappedDEKByteCount = 12 + 32 + 16 // nonce + key + tag
     private static let minimumPayloadByteCount = 12 + 16
     private static let maximumPayloadByteCount = 20 * 1024 * 1024
+    /// Upper bound for a user-picked backup file (checked BEFORE the file is loaded into memory).
+    static let maximumBackupFileByteCount = 2 * maximumPayloadByteCount
+
+    /// Reads a user-selected backup file with a hard size cap enforced both via file metadata and
+    /// a bounded read (TOCTOU-safe), so a huge or endlessly-growing file cannot exhaust memory.
+    static func readBackupFileBounded(at url: URL) throws -> Data {
+        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           size > maximumBackupFileByteCount {
+            throw VaultCryptoError.invalidEnvelopeFormat
+        }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: maximumBackupFileByteCount + 1) ?? Data()
+        guard !data.isEmpty, data.count <= maximumBackupFileByteCount else {
+            throw VaultCryptoError.invalidEnvelopeFormat
+        }
+        return data
+    }
     private static let legacyPayloadAADV1 = Data("CARDVAULT_PAYLOAD_AAD_V1".utf8)
     private static let kekCombineInfoV2 = Data("CARDSE_DUAL_KEK_COMBINE_V2".utf8)
     private static let backupKEKInfoV2 = Data("CARDSE_PORTABLE_BACKUP_KEK_V2".utf8)
@@ -487,7 +505,7 @@ enum VaultCrypto {
         data: Data,
         backupPassword: String
     ) throws -> [BankCard] {
-        guard data.count <= maximumPayloadByteCount * 2 else {
+        guard data.count <= maximumBackupFileByteCount else {
             throw VaultCryptoError.invalidEnvelopeFormat
         }
         let decoder = JSONDecoder()

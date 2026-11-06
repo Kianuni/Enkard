@@ -75,9 +75,18 @@ enum KeychainStateStore {
         if updateStatus == errSecSuccess {
             return true
         }
+        // Fail-closed: never delete the existing record (lockout counter / anti-rollback watermark) on a transient
+        // failure such as a locked device — a delete-then-failed-add would silently reset security state.
+        if updateStatus == errSecInteractionNotAllowed
+            || updateStatus == errSecAuthFailed
+            || updateStatus == errSecNotAvailable {
+            return false
+        }
 
-        // Delete any stale entry (e.g. attribute mismatch) and re-create with strict attributes.
-        SecItemDelete(baseQuery as CFDictionary)
+        if updateStatus != errSecItemNotFound {
+            // Delete a stale entry (e.g. legacy attribute mismatch) and re-create with strict attributes.
+            SecItemDelete(baseQuery as CFDictionary)
+        }
 
         var addQuery = baseQuery
         addQuery[kSecValueData as String] = data

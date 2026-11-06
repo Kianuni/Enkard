@@ -41,14 +41,18 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                 queue: .main
             ) { notification in
                 guard let field = notification.object as? UITextField else { return }
-                if field.autocorrectionType != .no { field.autocorrectionType = .no }
-                if field.spellCheckingType != .no { field.spellCheckingType = .no }
-                if field.smartQuotesType != .no { field.smartQuotesType = .no }
-                if field.smartDashesType != .no { field.smartDashesType = .no }
-                if field.smartInsertDeleteType != .no { field.smartInsertDeleteType = .no }
+                var changed = false
+                if field.autocorrectionType != .no { field.autocorrectionType = .no; changed = true }
+                if field.spellCheckingType != .no { field.spellCheckingType = .no; changed = true }
+                if field.smartQuotesType != .no { field.smartQuotesType = .no; changed = true }
+                if field.smartDashesType != .no { field.smartDashesType = .no; changed = true }
+                if field.smartInsertDeleteType != .no { field.smartInsertDeleteType = .no; changed = true }
                 if #available(iOS 17.0, *), field.inlinePredictionType != .no {
                     field.inlinePredictionType = .no
+                    changed = true
                 }
+                // Traits changed after editing began only take effect once the keyboard reloads.
+                if changed { field.reloadInputViews() }
             }
         )
 
@@ -59,14 +63,17 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                 queue: .main
             ) { notification in
                 guard let textView = notification.object as? UITextView else { return }
-                if textView.autocorrectionType != .no { textView.autocorrectionType = .no }
-                if textView.spellCheckingType != .no { textView.spellCheckingType = .no }
-                if textView.smartQuotesType != .no { textView.smartQuotesType = .no }
-                if textView.smartDashesType != .no { textView.smartDashesType = .no }
-                if textView.smartInsertDeleteType != .no { textView.smartInsertDeleteType = .no }
+                var changed = false
+                if textView.autocorrectionType != .no { textView.autocorrectionType = .no; changed = true }
+                if textView.spellCheckingType != .no { textView.spellCheckingType = .no; changed = true }
+                if textView.smartQuotesType != .no { textView.smartQuotesType = .no; changed = true }
+                if textView.smartDashesType != .no { textView.smartDashesType = .no; changed = true }
+                if textView.smartInsertDeleteType != .no { textView.smartInsertDeleteType = .no; changed = true }
                 if #available(iOS 17.0, *), textView.inlinePredictionType != .no {
                     textView.inlinePredictionType = .no
+                    changed = true
                 }
+                if changed { textView.reloadInputViews() }
             }
         )
     }

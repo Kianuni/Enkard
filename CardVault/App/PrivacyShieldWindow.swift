@@ -60,9 +60,14 @@ final class PrivacyShieldWindowManager {
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: nil
         ) { [weak self] _ in
             Self.performOnMain {
-                self?.setReason(.inactive, active: false)
                 self?.refreshCaptureState()
                 self?.installActivityMonitorIfNeeded()
+                // Keep the shield up until VaultStore has re-evaluated auto-lock on return and SwiftUI has
+                // committed the locked UI, so unlocked card content can never flash for a single frame.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    guard UIApplication.shared.applicationState == .active else { return }
+                    self?.setReason(.inactive, active: false)
+                }
             }
         })
         observers.append(center.addObserver(

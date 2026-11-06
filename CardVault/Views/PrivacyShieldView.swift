@@ -13,7 +13,7 @@ struct PrivacyShieldView: View {
     }
 
     private var title: String {
-        style == .captured ? "检测到录屏或投屏" : "CardSe · 防窥保护中"
+        style == .captured ? "检测到录屏或投屏" : "Enkard · 防窥保护中"
     }
 
     private var subtitle: String {

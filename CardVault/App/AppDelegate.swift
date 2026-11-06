@@ -1,14 +1,6 @@
 import UIKit
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
-    private(set) static var antiDebugEnabledAtLaunch = false
-
-    override init() {
-        Self.antiDebugEnabledAtLaunch = RuntimeSecurity.enforceReleaseAntiDebug()
-        NetworkLockdown.activate()
-        super.init()
-    }
-
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil

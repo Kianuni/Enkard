@@ -67,6 +67,8 @@ final class VaultStore {
     @ObservationIgnored private var activeKey: SymmetricKey?
     @ObservationIgnored private var currentGeneration: UInt64 = 0
     @ObservationIgnored private var needsReloadWhenProtectedDataAvailable = false
+    @ObservationIgnored private var hasBootstrapped = false
+    @ObservationIgnored private var isLoadingPreferences = false
     @ObservationIgnored private var backgroundEnteredAt: Date?
     @ObservationIgnored private var lastActivityAt = Date()
     @ObservationIgnored private var backgroundLockTask: Task<Void, Never>?
@@ -74,23 +76,36 @@ final class VaultStore {
 
     init(hardwareKeys: any HardwareKeyProvider = DeviceHardwareKeyManager()) {
         self.hardwareKeys = hardwareKeys
-        self.runtimeIntegrity = RuntimeSecurity.auditEnvironment(
-            antiDebugActive: AppDelegate.antiDebugEnabledAtLaunch
-        )
+        self.runtimeIntegrity = .cleanInitial
+        self.biometricsEnabled = false
+        self.autoLockTimeout = .immediately
+        self.idleLockTimeout = .minutes3
+        self.clipboardClearDuration = .seconds15
+        self.wipeAfterFailedAttempts = false
+    }
 
+    /// Runs once after `UIApplicationMain` and the active `UIWindowScene` are alive.
+    func bootstrapIfNeeded() {
+        guard !hasBootstrapped else { return }
+        hasBootstrapped = true
+
+        isLoadingPreferences = true
         let prefs = VaultPreferencesStore.load()
-        self.biometricsEnabled = prefs.biometricsEnabled
-        self.autoLockTimeout = AutoLockTimeout(rawValue: prefs.autoLockTimeoutRaw) ?? .immediately
-        self.idleLockTimeout = IdleLockTimeout(rawValue: prefs.idleLockTimeoutRaw) ?? .minutes3
-        self.clipboardClearDuration = ClipboardClearDuration(rawValue: prefs.clipboardClearDurationRaw) ?? .seconds15
-        self.wipeAfterFailedAttempts = prefs.wipeAfterFailedAttempts
+        biometricsEnabled = prefs.biometricsEnabled
+        autoLockTimeout = AutoLockTimeout(rawValue: prefs.autoLockTimeoutRaw) ?? .immediately
+        idleLockTimeout = IdleLockTimeout(rawValue: prefs.idleLockTimeoutRaw) ?? .minutes3
+        clipboardClearDuration = ClipboardClearDuration(rawValue: prefs.clipboardClearDurationRaw) ?? .seconds15
+        wipeAfterFailedAttempts = prefs.wipeAfterFailedAttempts
+        isLoadingPreferences = false
 
+        runtimeIntegrity = RuntimeSecurity.auditEnvironment()
         migrateLegacyStorageDirectoryIfNeeded()
         refreshScreenCaptureState()
         loadVaultStateFromDisk()
     }
 
     private func savePreferences() {
+        guard !isLoadingPreferences else { return }
         let prefs = VaultPreferences(
             biometricsEnabled: biometricsEnabled,
             autoLockTimeoutRaw: autoLockTimeout.rawValue,
@@ -905,11 +920,10 @@ final class VaultStore {
     }
 
     func handleDidBecomeActive() {
+        bootstrapIfNeeded()
         cancelBackgroundLock()
         refreshScreenCaptureState()
-        runtimeIntegrity = RuntimeSecurity.auditEnvironment(
-            antiDebugActive: AppDelegate.antiDebugEnabledAtLaunch
-        )
+        runtimeIntegrity = RuntimeSecurity.auditEnvironment()
         if needsReloadWhenProtectedDataAvailable {
             loadVaultStateFromDisk()
         }

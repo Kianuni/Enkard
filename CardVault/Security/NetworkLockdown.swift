@@ -33,9 +33,7 @@ enum NetworkLockdown {
         isActivated = true
 
         URLProtocol.registerClass(OfflineKillSwitchURLProtocol.self)
-        URLCache.shared.removeAllCachedResponses()
         URLCache.shared = URLCache(memoryCapacity: 0, diskCapacity: 0, diskPath: nil)
         HTTPCookieStorage.shared.cookieAcceptPolicy = .never
-        HTTPCookieStorage.shared.removeCookies(since: .distantPast)
     }
 }

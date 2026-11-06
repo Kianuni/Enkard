@@ -5,10 +5,19 @@ import UIKit
 ///
 /// iOS renders the internal canvas of a `UITextField` with `isSecureTextEntry = true` as blank
 /// in screenshots, recordings and AirPlay mirroring. We retain the owning `UITextField` strongly
-/// so UIKit never drops its secure layer property across layout passes.
+/// and verify view hierarchy ancestry before activating AutoLayout constraints.
 @MainActor
 enum SecureCanvasSupport {
-    static let isAvailable: Bool = makeSecurePair() != nil
+    private static var cachedAvailability: Bool?
+
+    static var isAvailable: Bool {
+        if let cachedAvailability {
+            return cachedAvailability
+        }
+        let available = makeSecurePair() != nil
+        cachedAvailability = available
+        return available
+    }
 
     static func makeSecurePair() -> (ownerField: UITextField, canvas: UIView)? {
         let field = UITextField()
@@ -17,8 +26,8 @@ enum SecureCanvasSupport {
         field.backgroundColor = .clear
         field.layoutIfNeeded()
 
-        let candidate = field.subviews.first ?? (field.layer.sublayers?.first?.delegate as? UIView)
-        guard let canvas = candidate,
+        guard let canvas = field.subviews.first,
+              canvas.superview === field,
               String(describing: type(of: canvas)).contains("Canvas") else {
             return nil
         }
@@ -32,12 +41,10 @@ enum SecureCanvasSupport {
 final class SecureHostingContainer<Content: View>: UIView {
     let hosting: UIHostingController<Content>
     /// Retained strongly so `canvas` never loses its `isSecureTextEntry` backing controller.
-    private let retainedSecureField: UITextField?
+    private var retainedSecureField: UITextField?
 
     init(rootView: Content) {
         hosting = UIHostingController(rootView: rootView)
-        let pair = SecureCanvasSupport.makeSecurePair()
-        retainedSecureField = pair?.ownerField
         super.init(frame: .zero)
 
         backgroundColor = .clear
@@ -47,7 +54,9 @@ final class SecureHostingContainer<Content: View>: UIView {
         hosting.view.isUserInteractionEnabled = false
         hosting.safeAreaRegions = []
 
-        if let pair {
+        if let pair = SecureCanvasSupport.makeSecurePair(),
+           pair.canvas.isDescendant(of: pair.ownerField) {
+            retainedSecureField = pair.ownerField
             let field = pair.ownerField
             let canvas = pair.canvas
             field.translatesAutoresizingMaskIntoConstraints = false
@@ -121,7 +130,7 @@ private struct LockdownTextInputModifier: ViewModifier {
         let base = content
             .autocorrectionDisabled(true)
             .textInputAutocapitalization(autocapitalization)
-            .textContentType(UITextContentType(rawValue: ""))
+            .textContentType(nil)
 
         if #available(iOS 18.0, *) {
             base.writingToolsBehavior(.disabled)

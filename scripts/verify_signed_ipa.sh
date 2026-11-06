@@ -145,7 +145,7 @@ if /usr/bin/codesign --verify --deep --strict "$APP_DIR" 2>/dev/null; then
   compact_ent="$(print -r -- "$entitlements" | /usr/bin/tr -d ' \t\n')"
 
   if print -r -- "$compact_ent" | /usr/bin/grep -q '<key>get-task-allow</key><true/>'; then
-    echo "⚠️  get-task-allow = true（个人/开发证书）：CardSe 已在 Release 二进制内置 PT_DENY_ATTACH 内核反调试予以缓解，但若有条件仍建议优先用 Ad Hoc 描述文件签名。"
+    echo "⚠️  get-task-allow = true（个人/开发证书）：CardSe 已在 Release 二进制内置 P_TRACED 调试监控予以缓解，若有条件仍建议优先用 Ad Hoc 描述文件签名。"
     warned=1
   else
     echo "✅ 未开启 get-task-allow"

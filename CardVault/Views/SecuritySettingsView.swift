@@ -48,6 +48,7 @@ struct SecuritySettingsView: View {
                         label: "截图与录屏防护",
                         value: SecureCanvasSupport.isAvailable ? "安全图层空白渲染 + 独立遮罩窗" : "录屏遮罩已开启（无截图图层）"
                     )
+                    AuditRow(icon: "camera.viewfinder", label: "相机扫码识卡", value: "纯内存离线 Vision · 零拍照零落盘")
                     AuditRow(icon: "internaldrive.fill", label: "本机存储保护", value: "锁屏销毁内存密钥 · 禁系统备份")
                 } header: {
                     Text("CardSe 最高安全状态")

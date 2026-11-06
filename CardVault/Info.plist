@@ -35,6 +35,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<false/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>使用相机在本地内存中实时识别银行卡正面卡号与有效期（全程不拍照、不落盘、不联网）</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>使用面容 ID 快速解锁 CardSe 本地安全芯片加密卡包</string>
 	<key>UIApplicationSceneManifest</key>

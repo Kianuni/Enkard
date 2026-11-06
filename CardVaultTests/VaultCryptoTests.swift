@@ -1,3 +1,4 @@
+import CoreGraphics
 import CryptoKit
 import XCTest
 @testable import CardSe
@@ -138,5 +139,56 @@ final class VaultCryptoTests: XCTestCase {
         let record = LockoutRecord(failures: 6, lockStartMonotonicNs: 100 * sec, lockDurationSeconds: 60, bootSession: "A")
         XCTAssertEqual(LockoutPolicy.remainingSeconds(record: record, nowMonotonicNs: 130 * sec, currentBootSession: "A").remaining, 30)
         XCTAssertEqual(LockoutPolicy.remainingSeconds(record: record, nowMonotonicNs: 1 * sec, currentBootSession: "B").remaining, 60)
+    }
+
+    func testCardOCRParserAndMultiFrameConsensus() {
+        let blocks: [RecognizedTextBlock] = [
+            RecognizedTextBlock(text: "招商银行", boundingBox: CGRect(x: 0.08, y: 0.82, width: 0.35, height: 0.06)),
+            RecognizedTextBlock(text: "4111 Il11 1111 1111", boundingBox: CGRect(x: 0.10, y: 0.48, width: 0.80, height: 0.08)),
+            RecognizedTextBlock(text: "VALID FROM 05/24 VALID THRU 08/29", boundingBox: CGRect(x: 0.20, y: 0.34, width: 0.60, height: 0.05)),
+            RecognizedTextBlock(text: "VISA PLATINUM", boundingBox: CGRect(x: 0.68, y: 0.14, width: 0.24, height: 0.05)),
+            RecognizedTextBlock(text: "SAN ZHANG", boundingBox: CGRect(x: 0.10, y: 0.16, width: 0.36, height: 0.06))
+        ]
+        let candidate = CardOCRParser.parseFrame(blocks)
+        XCTAssertEqual(candidate?.cardNumber, "4111111111111111")
+        XCTAssertEqual(candidate?.expiryMonth, "08")
+        XCTAssertEqual(candidate?.expiryYear, "29")
+        XCTAssertEqual(candidate?.cardholderName, "SAN ZHANG")
+        XCTAssertEqual(candidate?.bankName, "招商银行")
+
+        // Reject invalid Luhn
+        XCTAssertNil(CardOCRParser.parseFrame([
+            RecognizedTextBlock(text: "4111 1111 1111 1112", boundingBox: CGRect(x: 0.1, y: 0.5, width: 0.8, height: 0.08))
+        ]))
+
+        // Vertical 4x4 stack stitching + multi-frame consensus
+        let verticalBlocks: [RecognizedTextBlock] = [
+            RecognizedTextBlock(text: "6225", boundingBox: CGRect(x: 0.16, y: 0.72, width: 0.22, height: 0.05)),
+            RecognizedTextBlock(text: "8801", boundingBox: CGRect(x: 0.16, y: 0.62, width: 0.22, height: 0.05)),
+            RecognizedTextBlock(text: "3770", boundingBox: CGRect(x: 0.16, y: 0.52, width: 0.22, height: 0.05)),
+            RecognizedTextBlock(text: "1232", boundingBox: CGRect(x: 0.16, y: 0.42, width: 0.22, height: 0.05))
+        ]
+        let verticalCandidate = CardOCRParser.parseFrame(verticalBlocks)
+        XCTAssertEqual(verticalCandidate?.cardNumber, "6225880137701232")
+
+        var accumulator = CardScanConsensusAccumulator(requiredConfirmations: 2)
+        if case .provisional = accumulator.ingest(verticalCandidate) {} else {
+            XCTFail("Expected provisional outcome on first frame")
+        }
+        let enriched = ScannedCardCandidate(
+            cardNumber: "6225880137701232",
+            expiryMonth: "11",
+            expiryYear: "30",
+            cardholderName: "SAN ZHANG",
+            bankName: "工商银行"
+        )
+        if case .confirmed(let merged) = accumulator.ingest(enriched) {
+            XCTAssertEqual(merged.expiryMonth, "11")
+            XCTAssertEqual(merged.expiryYear, "30")
+            XCTAssertEqual(merged.cardholderName, "SAN ZHANG")
+            XCTAssertEqual(merged.bankName, "工商银行")
+        } else {
+            XCTFail("Expected confirmed outcome on second frame")
+        }
     }
 }

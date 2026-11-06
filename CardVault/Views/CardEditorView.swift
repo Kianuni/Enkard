@@ -24,6 +24,8 @@ struct CardEditorView: View {
     /// Controls whether the `.screenshotProtected()` preview card at top displays full card number & CVV.
     @State private var revealInSecurePreview = false
     @State private var previewRevealTask: Task<Void, Never>? = nil
+    @State private var showingCardScanner = false
+    @State private var didPopulateInitialValues = false
 
     @State private var theme: CardTheme = .obsidianGold
     @State private var isFavorite = false
@@ -87,6 +89,41 @@ struct CardEditorView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
                             .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(store.isScreenCaptured)
+
+                        Button {
+                            guard !store.isScreenCaptured else {
+                                store.securityNotice = "录屏或投屏期间禁止启动相机扫描。"
+                                return
+                            }
+                            cardNumberFocused = false
+                            showingCardScanner = true
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "camera.viewfinder")
+                                    .font(.headline)
+                                    .foregroundStyle(Color.accentColor)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("扫描银行卡正面自动填写")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                    Text("纯内存离线识别卡号/有效期/姓名 · 零拍照零落盘")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                Color(.secondarySystemGroupedBackground),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            )
                         }
                         .buttonStyle(.plain)
                         .disabled(store.isScreenCaptured)
@@ -342,30 +379,77 @@ struct CardEditorView: View {
             }
             .onAppear(perform: populateIfEditing)
             .onDisappear {
-                scrubState()
+                if !showingCardScanner {
+                    scrubState()
+                }
             }
             .onValueChange(of: store.screenshotEventCount) { _ in
                 previewRevealTask?.cancel()
                 revealInSecurePreview = false
             }
-        }
-    }
-
-    private func toggleSecurePreview() {
-        previewRevealTask?.cancel()
-        if revealInSecurePreview {
-            revealInSecurePreview = false
-        } else {
-            revealInSecurePreview = true
-            previewRevealTask = Task {
-                try? await Task.sleep(for: .seconds(8))
-                guard !Task.isCancelled else { return }
-                revealInSecurePreview = false
+            .onValueChange(of: store.isScreenCaptured) { captured in
+                if captured {
+                    showingCardScanner = false
+                    previewRevealTask?.cancel()
+                    revealInSecurePreview = false
+                }
+            }
+            .onValueChange(of: store.phase) { newPhase in
+                if newPhase != .unlocked {
+                    showingCardScanner = false
+                    scrubState()
+                }
+            }
+            .fullScreenCover(isPresented: $showingCardScanner) {
+                CardScannerSheet(store: store) { scanned in
+                    applyScannedCandidate(scanned)
+                }
             }
         }
     }
 
+    private func toggleSecurePreview() {
+        if revealInSecurePreview {
+            previewRevealTask?.cancel()
+            revealInSecurePreview = false
+        } else {
+            startTemporarySecurePreview()
+        }
+    }
+
+    private func startTemporarySecurePreview() {
+        previewRevealTask?.cancel()
+        guard !store.isScreenCaptured else { return }
+        revealInSecurePreview = true
+        previewRevealTask = Task {
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            revealInSecurePreview = false
+        }
+    }
+
+    private func applyScannedCandidate(_ scanned: ScannedCardCandidate) {
+        validationError = nil
+        cardNumberDigits = scanned.cardNumber
+        if !didManuallySelectNetwork {
+            network = CardNetwork.detect(from: scanned.cardNumber)
+        }
+        if let month = scanned.expiryMonth, let year = scanned.expiryYear {
+            expiryMonth = month
+            expiryYear = year
+        }
+        if let holder = scanned.cardholderName, !holder.isEmpty, cardholderName.isEmpty {
+            cardholderName = holder
+        }
+        if let detectedBank = scanned.bankName, !detectedBank.isEmpty, bankName.isEmpty {
+            bankName = detectedBank
+        }
+        startTemporarySecurePreview()
+    }
+
     private func populateIfEditing() {
+        guard !didPopulateInitialValues else { return }
+        didPopulateInitialValues = true
         guard let card = existingCard else { return }
         bankName = card.bankName
         nickname = card.nickname

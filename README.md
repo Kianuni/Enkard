@@ -1,6 +1,6 @@
-# CardSe (v2.0.0)：最高安全等级 · 断网零同步 iPhone 银行卡硬件保险库
+# CardSe (v2.1.0)：最高安全等级 · 断网零同步 iPhone 银行卡硬件保险库
 
-**CardSe** 是专为 iPhone 自签场景打造的纯离线原生银行卡加密保险库，仅使用 Apple 系统安全框架（`SwiftUI` + `CryptoKit` + `SecureEnclave` + `CommonCrypto` + `Security` + `LocalAuthentication`），**零第三方依赖、零网络代码、内置进程级断网拦截器、禁绝一切云同步**。
+**CardSe** 是专为 iPhone 自签场景打造的纯离线原生银行卡加密保险库，仅使用 Apple 系统安全框架（`SwiftUI` + `CryptoKit` + `SecureEnclave` + `CommonCrypto` + `Security` + `LocalAuthentication` + 本机 `AVFoundation` / `Vision`），**零第三方依赖、零网络代码、内置进程级断网拦截器、禁绝一切云同步**。
 
 ---
 
@@ -31,6 +31,11 @@
 ### 4. 自签运行时自卫与屏幕防泄露
 - **进程内调试监控与注入自检**：Release 包内置沙盒安全的 `P_TRACED` 周期性调试器监控（发现附加立即销毁内存密钥并锁定）与 `_dyld` 全量镜像/注入环境自检。
 - **全覆盖防截屏输入体验**：彻底移除密码与 CVV 的普通明文输入框切换；卡号、有效期、CVV、安全备注均采用安全输入控件或置于安全渲染图层内（截屏与录屏自动空白）；切后台同步拉起顶层独立 UIKit 遮罩窗口；按电源键锁屏、手动锁定或倒计时归零均主动覆写清空剪贴板。
+
+### 5. 纯内存流离线扫码识卡（v2.1 新增 · 零拍照零落盘）
+- **绝不拍照、绝不写盘、绝不碰相册**：采用 `AVCaptureVideoDataOutput` 瞬态 YUV 视频帧缓冲（`CVPixelBuffer`）直通 Apple 神经网络引擎 `VNRecognizeTextRequest` 纯离线识别，不调用任何照片编码或文件写入 API，识别完成即释放帧内存。
+- **取景器防截屏 + 录屏/切后台即断电**：实时取景图层嵌入 `SecureCanvasSupport` 防截屏安全画布；检测到系统录屏/投屏、切后台或卡包锁定时立即切断相机流并清零暂存结果。
+- **双帧 Luhn 共识校验 + 仅扫正面**：支持横版与竖版银行卡正面卡号（含压印烫金字符纠偏与分段拼接）、`MM/YY` 有效期、英文/拼音姓名及主流发卡行自动填入，连续两帧通过 Luhn 校验才确认；背面 CVV 安全码坚持仅手动密文输入。
 
 ---
 

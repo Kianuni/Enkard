@@ -30,17 +30,25 @@ struct PasswordAssessment: Equatable, Sendable {
 enum PasswordPolicy {
     static let masterMinimumLength = VaultCrypto.minimumVaultPasswordLength   // 8
     static let backupMinimumLength = VaultCrypto.minimumBackupPasswordLength  // 12
+    static let maximumPasswordLength = 256
     static let masterMinimumBits = 40.0
     static let backupMinimumBits = 65.0
 
     static func validationMessage(_ rawPassword: String, for purpose: PasswordPurpose) -> String? {
+        let name = purpose == .master ? "主密码" : "备份密码"
+        if rawPassword.utf8.count > maximumPasswordLength * 4 {
+            return "\(name)长度不能超过 \(maximumPasswordLength) 位"
+        }
+
         let password = VaultCrypto.normalizePassword(rawPassword)
         let minimumLength = purpose == .master ? masterMinimumLength : backupMinimumLength
         let minimumBits = purpose == .master ? masterMinimumBits : backupMinimumBits
-        let name = purpose == .master ? "主密码" : "备份密码"
 
         if password.count < minimumLength {
             return "\(name)至少需要 \(minimumLength) 位"
+        }
+        if password.count > maximumPasswordLength {
+            return "\(name)长度不能超过 \(maximumPasswordLength) 位"
         }
 
         if containsDisallowedInvisibleOrControlScalar(password) {
@@ -62,7 +70,19 @@ enum PasswordPolicy {
     }
 
     static func assess(_ rawPassword: String) -> PasswordAssessment {
+        if rawPassword.utf8.count > maximumPasswordLength * 4 {
+            return PasswordAssessment(
+                estimatedBits: 0,
+                warnings: ["密码长度超出安全上限（最多 \(maximumPasswordLength) 位）"]
+            )
+        }
         let normalizedInput = VaultCrypto.normalizePassword(rawPassword)
+        if normalizedInput.count > maximumPasswordLength {
+            return PasswordAssessment(
+                estimatedBits: 0,
+                warnings: ["密码长度超出安全上限（最多 \(maximumPasswordLength) 位）"]
+            )
+        }
         if containsDisallowedInvisibleOrControlScalar(normalizedInput) {
             return PasswordAssessment(estimatedBits: 0, warnings: ["包含不可见格式字符或控制字符"])
         }

@@ -34,12 +34,20 @@ struct RuntimeIntegrityReport: Equatable, Sendable {
     }
 }
 
-/// Process-level tamper, dylib-injection, and kernel anti-debug protection for self-signed iOS deployments.
+/// Process-level tamper, dylib-injection, symbol-interposition, and kernel anti-debug protection for self-signed iOS deployments.
 /// Combines XNU `PT_DENY_ATTACH` (`P_LNOATTACH`) via a direct Mach-O `dyld` stub (preventing `dlsym` hooks
-/// and `arm64e` PAC pointer-cast traps) with continuous read-only `sysctl(KERN_PROC_PID)` (`P_TRACED`) polling.
+/// and `arm64e` PAC pointer-cast traps) with continuous read-only `sysctl(KERN_PROC_PID)` (`P_TRACED`) polling,
+/// Mach-O `S_INTERPOSING` / `__interpose` inspection, `dladdr` header cross-verification, and critical symbol origin checks.
 enum RuntimeSecurity {
     private static let ptDenyAttach: CInt = 31 // PT_DENY_ATTACH in <sys/ptrace.h>
     private static let pTracedFlag: Int32 = 0x00000800 // P_TRACED in <sys/proc.h>
+    private static let criticalSystemSymbols = [
+        "ptrace",
+        "sysctl",
+        "_dyld_get_image_name",
+        "dladdr",
+        "CCKeyDerivationPBKDF"
+    ]
 
     /// Sets XNU `P_LNOATTACH` on the current process in Release builds, rejecting external `lldb` / `debugserver`
     /// attachment at the kernel level even when personal self-signing profiles include `get-task-allow=true`.
@@ -63,39 +71,105 @@ enum RuntimeSecurity {
         return (info.kp_proc.p_flag & pTracedFlag) != 0
     }
 
-    /// Inspects loaded Mach-O images, environment variables, and known hook paths using strictly read-only checks.
+    /// Inspects loaded Mach-O images, section tables, symbol origins, environment variables, and known hook paths
+    /// using strictly read-only checks.
     static func auditEnvironment(antiDebugActive: Bool = false) -> RuntimeIntegrityReport {
         var anomalies: [String] = []
         var unexpectedLibraries: [String] = []
 
-        if let inserted = getenv("DYLD_INSERT_LIBRARIES"), String(cString: inserted).isEmpty == false {
-            anomalies.append("环境变量存在 DYLD_INSERT_LIBRARIES 动态注入")
+        if let inserted = getenv("DYLD_INSERT_LIBRARIES") {
+            let insertedValue = String(cString: inserted)
+            if !insertedValue.isEmpty {
+                #if DEBUG
+                let nonXCTestEntries = insertedValue
+                    .split(separator: ":")
+                    .filter {
+                        !$0.contains("libXCTestBundleInject.dylib")
+                            && !$0.contains("libMainThreadChecker.dylib")
+                            && !$0.contains("libRPAC.dylib")
+                    }
+                if !nonXCTestEntries.isEmpty {
+                    appendUnique(&anomalies, "环境变量存在 DYLD_INSERT_LIBRARIES 动态注入")
+                }
+                #else
+                appendUnique(&anomalies, "环境变量存在 DYLD_INSERT_LIBRARIES 动态注入")
+                #endif
+            }
         }
 
         #if !DEBUG
         if isDebuggerAttached() {
-            anomalies.append("检测到调试器附加（P_TRACED）")
+            appendUnique(&anomalies, "检测到调试器附加（P_TRACED）")
         }
         #endif
 
         let mainExecutable = normalizedPath(Bundle.main.executablePath ?? "")
         let mainAppDir = normalizedPath(Bundle.main.bundlePath)
+        var seenHeadersByPath: [String: UnsafeRawPointer] = [:]
+
         let imageCount = _dyld_image_count()
         for idx in 0..<imageCount {
-            guard let rawName = _dyld_get_image_name(idx) else { continue }
-            let imagePath = normalizedPath(String(cString: rawName))
-            if imagePath == mainExecutable { continue }
-            if isTrustedSystemImagePath(imagePath) { continue }
-            // Ignore system-generated app bundle plugins during XCTest runs in Debug.
-            #if DEBUG
-            if !mainAppDir.isEmpty && imagePath.hasPrefix(mainAppDir) { continue }
-            #endif
+            let rawNamePtr = _dyld_get_image_name(idx)
+            let headerPtr = _dyld_get_image_header(idx)
 
-            let basename = (imagePath as NSString).lastPathComponent
-            if !unexpectedLibraries.contains(basename) {
-                unexpectedLibraries.append(basename)
+            let dyldPath = rawNamePtr.map { normalizedPath(String(cString: $0)) } ?? ""
+            var dladdrPath = ""
+            if let headerPtr {
+                var dlInfo = Dl_info()
+                if dladdr(UnsafeRawPointer(headerPtr), &dlInfo) != 0, let fname = dlInfo.dli_fname {
+                    dladdrPath = normalizedPath(String(cString: fname))
+                }
+            }
+
+            if !dyldPath.isEmpty && !dladdrPath.isEmpty && dyldPath != dladdrPath {
+                appendUnique(&anomalies, "检测到 dyld 镜像路径伪造（_dyld_get_image_name 与 dladdr 不一致）")
+            }
+
+            let effectivePath = !dladdrPath.isEmpty ? dladdrPath : dyldPath
+            if !effectivePath.isEmpty, let headerPtr {
+                let rawHeader = UnsafeRawPointer(headerPtr)
+                if let previousHeader = seenHeadersByPath[effectivePath], previousHeader != rawHeader {
+                    let dupBase = (effectivePath as NSString).lastPathComponent
+                    appendUnique(&anomalies, "检测到重复伪装的系统镜像路径（\(dupBase)）")
+                } else {
+                    seenHeadersByPath[effectivePath] = rawHeader
+                }
+            }
+
+            if let headerPtr, hasInterposeSection(headerPtr) {
+                #if targetEnvironment(simulator)
+                let isSimulatorHostShim = effectivePath.hasPrefix("/usr/lib/system/libsystem_sim_")
+                #else
+                let isSimulatorHostShim = false
+                #endif
+                #if DEBUG
+                let isDebugXCTestInjector = effectivePath.hasPrefix("/Developer/")
+                    || effectivePath.contains("Xcode")
+                    || effectivePath.contains("XCTest")
+                    || effectivePath.hasSuffix("/libRPAC.dylib")
+                #else
+                let isDebugXCTestInjector = false
+                #endif
+                if !isSimulatorHostShim && !isDebugXCTestInjector {
+                    let interposeBase = (effectivePath as NSString).lastPathComponent
+                    appendUnique(&anomalies, "检测到 Mach-O __interpose 符号劫持段（\(interposeBase)）")
+                }
+            }
+
+            let isMainExecutableImage = (headerPtr?.pointee.filetype == UInt32(MH_EXECUTE))
+            for candidatePath in [dyldPath, dladdrPath] where !candidatePath.isEmpty {
+                if isMainExecutableImage || candidatePath == mainExecutable { continue }
+                if isTrustedSystemImagePath(candidatePath) { continue }
+                #if DEBUG
+                if !mainAppDir.isEmpty && candidatePath.hasPrefix(mainAppDir) { continue }
+                #endif
+
+                let basename = (candidatePath as NSString).lastPathComponent
+                appendUnique(&unexpectedLibraries, basename)
             }
         }
+
+        verifyCriticalSymbolOrigins(anomalies: &anomalies)
 
         for jbPath in [
             "/var/jb",
@@ -103,7 +177,7 @@ enum RuntimeSecurity {
             "/usr/lib/ellekit.dylib",
             "/usr/lib/TweakInject"
         ] where access(jbPath, F_OK) == 0 {
-            anomalies.append("检测到越狱或 Hook 环境路径（\(jbPath)）")
+            appendUnique(&anomalies, "检测到越狱或 Hook 环境路径（\(jbPath)）")
             break
         }
 
@@ -116,14 +190,117 @@ enum RuntimeSecurity {
         )
     }
 
+    // MARK: - Mach-O & Symbol Origin Verification (Read-Only, Bounds-Checked)
+
+    private static func hasInterposeSection(_ header: UnsafePointer<mach_header>) -> Bool {
+        guard header.pointee.magic == MH_MAGIC_64 else { return false }
+        let headerRaw = UnsafeRawPointer(header)
+        let header64 = readMachStruct(mach_header_64.self, at: headerRaw)
+
+        let ncmds = Int(header64.ncmds)
+        let sizeofcmds = Int(header64.sizeofcmds)
+        guard ncmds >= 0, ncmds <= 4096, sizeofcmds >= 0, sizeofcmds <= 4 * 1024 * 1024 else {
+            return false
+        }
+
+        var cmdPtr = headerRaw.advanced(by: MemoryLayout<mach_header_64>.size)
+        let cmdsEnd = cmdPtr.advanced(by: sizeofcmds)
+
+        for _ in 0..<ncmds {
+            guard cmdPtr.advanced(by: MemoryLayout<load_command>.size) <= cmdsEnd else { break }
+            let loadCmd = readMachStruct(load_command.self, at: cmdPtr)
+            let cmdSize = Int(loadCmd.cmdsize)
+            guard cmdSize >= MemoryLayout<load_command>.size,
+                  cmdPtr.advanced(by: cmdSize) <= cmdsEnd else {
+                break
+            }
+
+            if loadCmd.cmd == UInt32(LC_SEGMENT_64),
+               cmdSize >= MemoryLayout<segment_command_64>.size {
+                let segCmd = readMachStruct(segment_command_64.self, at: cmdPtr)
+                let nsects = Int(segCmd.nsects)
+                let sectionStride = MemoryLayout<section_64>.size
+                if nsects > 0,
+                   nsects <= 4096,
+                   MemoryLayout<segment_command_64>.size + nsects * sectionStride <= cmdSize {
+                    var sectPtr = cmdPtr.advanced(by: MemoryLayout<segment_command_64>.size)
+                    for _ in 0..<nsects {
+                        let sect = readMachStruct(section_64.self, at: sectPtr)
+                        let sectType = sect.flags & UInt32(SECTION_TYPE)
+                        if sectType == UInt32(S_INTERPOSING) {
+                            return true
+                        }
+                        let sectName = withUnsafeBytes(of: sect.sectname) { raw in
+                            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+                        }
+                        if sectName == "__interpose" {
+                            return true
+                        }
+                        sectPtr = sectPtr.advanced(by: sectionStride)
+                    }
+                }
+            }
+
+            cmdPtr = cmdPtr.advanced(by: cmdSize)
+        }
+        return false
+    }
+
+    private static func verifyCriticalSymbolOrigins(anomalies: inout [String]) {
+        guard let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2) else { return }
+        for symbol in criticalSystemSymbols {
+            guard let symAddr = dlsym(rtldDefault, symbol) else {
+                appendUnique(&anomalies, "关键系统安全符号缺失（\(symbol)）")
+                continue
+            }
+            var dlInfo = Dl_info()
+            guard dladdr(symAddr, &dlInfo) != 0, let rawFname = dlInfo.dli_fname else {
+                appendUnique(&anomalies, "关键系统安全符号来源不可解析（\(symbol)）")
+                continue
+            }
+            let ownerPath = normalizedPath(String(cString: rawFname))
+            let isSystemUmbrella = ownerPath.hasPrefix("/usr/lib/system/")
+                || ownerPath == "/usr/lib/libSystem.B.dylib"
+            if !isSystemUmbrella || !isTrustedSystemImagePath(ownerPath) {
+                appendUnique(&anomalies, "检测到关键系统符号被重定向或 Hook（\(symbol)）")
+            }
+        }
+    }
+
+    private static func readMachStruct<T>(_ type: T.Type, at ptr: UnsafeRawPointer) -> T {
+        withUnsafeTemporaryAllocation(of: T.self, capacity: 1) { buffer in
+            let dst = UnsafeMutableRawPointer(buffer.baseAddress!)
+            memcpy(dst, ptr, MemoryLayout<T>.size)
+            return buffer[0]
+        }
+    }
+
+    private static func appendUnique(_ array: inout [String], _ value: String) {
+        if !array.contains(value) {
+            array.append(value)
+        }
+    }
+
     private static func normalizedPath(_ path: String) -> String {
-        if path.hasPrefix("/private/var/") {
-            return String(path.dropFirst("/private".count))
+        var result = path
+        #if targetEnvironment(simulator)
+        if let simRootPtr = getenv("SIMULATOR_ROOT") {
+            let simRoot = String(cString: simRootPtr)
+            if !simRoot.isEmpty, result.hasPrefix(simRoot) {
+                result = String(result.dropFirst(simRoot.count))
+            }
         }
-        if path.hasPrefix("/private/etc/") {
-            return String(path.dropFirst("/private".count))
+        if let runtimeRange = result.range(of: "/RuntimeRoot/") {
+            result = String(result[runtimeRange.upperBound...])
+            if !result.hasPrefix("/") {
+                result = "/" + result
+            }
         }
-        return path
+        #endif
+        if result.hasPrefix("/private/var/") || result.hasPrefix("/private/etc/") || result.hasPrefix("/private/tmp/") {
+            return String(result.dropFirst("/private".count))
+        }
+        return result
     }
 
     private static func isTrustedSystemImagePath(_ path: String) -> Bool {
@@ -149,6 +326,11 @@ enum RuntimeSecurity {
             }
             return true
         }
+        #if targetEnvironment(simulator)
+        if path.contains(".simruntime/") || path.contains("/CoreSimulator/") {
+            return true
+        }
+        #endif
         #if DEBUG
         if path.hasPrefix("/Developer/") || path.contains(".xctest/") || path.contains("Xcode") {
             return true

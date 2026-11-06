@@ -7,6 +7,7 @@ import Security
 enum VaultCryptoError: LocalizedError, Equatable {
     case emptyPassword
     case passwordTooShort(minimum: Int)
+    case passwordTooLong(maximum: Int)
     case weakPassword(String)
     case randomGenerationFailed
     case keyDerivationFailed
@@ -22,6 +23,8 @@ enum VaultCryptoError: LocalizedError, Equatable {
             return "请输入密码"
         case .passwordTooShort(let minimum):
             return "密码长度至少需要 \(minimum) 位"
+        case .passwordTooLong(let maximum):
+            return "密码长度不能超过 \(maximum) 位"
         case .weakPassword(let message):
             return message
         case .randomGenerationFailed:
@@ -60,6 +63,8 @@ enum VaultCrypto {
     static let payloadPaddingBlockSize = 4096   // 4 KB size buckets hide card count
     static let minimumVaultPasswordLength = 8
     static let minimumBackupPasswordLength = 12
+    static let maximumPasswordLength = 256
+    static let maximumPasswordUTF8Bytes = 1024
 
     private static let wrappedDEKByteCount = 12 + 32 + 16 // nonce + key + tag
     private static let minimumPayloadByteCount = 12 + 16
@@ -137,9 +142,15 @@ enum VaultCrypto {
         iterations: Int,
         normalize: Bool
     ) throws -> SymmetricKey {
+        guard password.utf8.count <= maximumPasswordUTF8Bytes * 4 else {
+            throw VaultCryptoError.passwordTooLong(maximum: maximumPasswordLength)
+        }
         let effective = normalize ? normalizePassword(password) : password
         guard !effective.isEmpty else {
             throw VaultCryptoError.emptyPassword
+        }
+        guard effective.utf8.count <= maximumPasswordUTF8Bytes else {
+            throw VaultCryptoError.passwordTooLong(maximum: maximumPasswordLength)
         }
         guard (minimumAcceptedIterations...maximumAcceptedIterations).contains(iterations),
               (16...64).contains(salt.count) else {
@@ -200,9 +211,15 @@ enum VaultCrypto {
         rotateHardwareKey: Bool = true,
         deferKeyCommit: Bool = false
     ) throws -> (envelope: VaultEnvelope, key: SymmetricKey) {
+        guard masterPassword.utf8.count <= maximumPasswordUTF8Bytes * 4 else {
+            throw VaultCryptoError.passwordTooLong(maximum: maximumPasswordLength)
+        }
         let normalized = normalizePassword(masterPassword)
         guard normalized.count >= minimumVaultPasswordLength else {
             throw VaultCryptoError.passwordTooShort(minimum: minimumVaultPasswordLength)
+        }
+        guard normalized.count <= maximumPasswordLength else {
+            throw VaultCryptoError.passwordTooLong(maximum: maximumPasswordLength)
         }
         guard (minimumNewIterations...maximumAcceptedIterations).contains(iterations) else {
             throw VaultCryptoError.invalidEnvelopeFormat
@@ -409,9 +426,15 @@ enum VaultCrypto {
         backupPassword: String,
         iterations: Int
     ) throws -> Data {
+        guard backupPassword.utf8.count <= maximumPasswordUTF8Bytes * 4 else {
+            throw VaultCryptoError.passwordTooLong(maximum: maximumPasswordLength)
+        }
         let normalized = normalizePassword(backupPassword)
         guard normalized.count >= minimumBackupPasswordLength else {
             throw VaultCryptoError.passwordTooShort(minimum: minimumBackupPasswordLength)
+        }
+        guard normalized.count <= maximumPasswordLength else {
+            throw VaultCryptoError.passwordTooLong(maximum: maximumPasswordLength)
         }
         guard (minimumNewIterations...maximumAcceptedIterations).contains(iterations) else {
             throw VaultCryptoError.invalidEnvelopeFormat
@@ -540,6 +563,9 @@ enum VaultCrypto {
               let ephPub = envelope.ephemeralPublicKey else {
             throw VaultCryptoError.invalidEnvelopeFormat
         }
+        guard password.utf8.count <= maximumPasswordUTF8Bytes * 4 else {
+            throw VaultCryptoError.passwordTooLong(maximum: maximumPasswordLength)
+        }
         let normalized = normalizePassword(password)
         guard !normalized.isEmpty else {
             throw VaultCryptoError.emptyPassword
@@ -610,6 +636,9 @@ enum VaultCrypto {
     ) throws -> SymmetricKey {
         guard let vaultID = envelope.vaultID else {
             throw VaultCryptoError.invalidEnvelopeFormat
+        }
+        guard password.utf8.count <= maximumPasswordUTF8Bytes * 4 else {
+            throw VaultCryptoError.passwordTooLong(maximum: maximumPasswordLength)
         }
         let normalized = normalizePassword(password)
         guard !normalized.isEmpty else {
@@ -905,6 +934,9 @@ enum VaultCrypto {
         }
         guard !password.isEmpty else {
             throw VaultCryptoError.emptyPassword
+        }
+        guard password.utf8.count <= maximumPasswordUTF8Bytes * 4 else {
+            throw VaultCryptoError.passwordTooLong(maximum: maximumPasswordLength)
         }
 
         var wrapAAD = Data("\(envelope.magic)|v\(envelope.version)|iter=\(envelope.kdfIterations)|".utf8)

@@ -186,4 +186,33 @@ final class VaultCryptoTests: XCTestCase {
         XCTAssertTrue(VaultIdentityStore.advanceWatermark(VaultIdentityRecord(vaultID: id, generation: 4, envelopeVersion: 1), using: backend))
         XCTAssertEqual(VaultIdentityStore.readState(using: backend), .found(VaultIdentityRecord(vaultID: id, generation: 12, envelopeVersion: 2)))
     }
+
+    func testOversizedPasswordPasteBombBoundedInConstantTime() {
+        let giant = String(repeating: "Ab1!xY9#qZ", count: 5_000) // 50,000 chars
+        let start = Date()
+        let msg = PasswordPolicy.validationMessage(giant, for: .master)
+        let assessment = PasswordPolicy.assess(giant)
+        let elapsed = Date().timeIntervalSince(start)
+
+        XCTAssertNotNil(msg)
+        XCTAssertEqual(assessment.estimatedBits, 0)
+        XCTAssertLessThan(elapsed, 0.05)
+
+        let hw = InMemoryHardwareKeyProvider()
+        XCTAssertThrowsError(
+            try VaultCrypto.createNewLocalVault(
+                masterPassword: giant,
+                initialCards: [],
+                iterations: iterations,
+                hardwareKeys: hw
+            )
+        ) {
+            XCTAssertEqual($0 as? VaultCryptoError, .passwordTooLong(maximum: VaultCrypto.maximumPasswordLength))
+        }
+    }
+
+    func testCleanRuntimeIntegrityBaseline() {
+        let report = RuntimeSecurity.auditEnvironment(antiDebugActive: false)
+        XCTAssertFalse(report.isCompromised, "Unexpected compromise on clean test host: \(report.summaryText)")
+    }
 }

@@ -32,6 +32,7 @@ struct ContentView: View {
                 .zIndex(50)
             }
         }
+        .lockdownTextInput()
         .disableSystemWritingTools()
         .animation(.easeInOut(duration: 0.22), value: store.clipboard.activeToast)
         .alert(

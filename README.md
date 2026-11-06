@@ -1,4 +1,4 @@
-# CardSe (v2.1.1)：最高安全等级 · 断网零同步 · 极简零相机权限 iPhone 银行卡硬件保险库
+# CardSe (v2.1.3)：最高安全等级 · 断网零同步 · 极简零相机权限 iPhone 银行卡硬件保险库
 
 **CardSe** 是专为 iPhone 自签场景打造的纯离线原生银行卡加密保险库，仅使用 Apple 系统核心安全框架（`SwiftUI` + `CryptoKit` + `SecureEnclave` + `CommonCrypto` + `Security` + `LocalAuthentication`），**零第三方依赖、零网络代码、零相机/相册权限、内置进程级断网拦截器、禁绝一切云同步**。
 
@@ -29,7 +29,7 @@
 - **Vault ID + 版本号双重防回滚**：同时比对唯一库 ID 与单调递增版本号，拦截旧文件回滚与整库替换。
 
 ### 4. 自签运行时自卫、符号剥离与屏幕防泄露
-- **内核级反调试 + 持续监控**：Release 包在启动时通过 Mach-O 原生桩调用 XNU `PT_DENY_ATTACH`（置位内核 `P_LNOATTACH` 拒绝外部 `lldb` / `debugserver` 附加，抵御免费 Apple ID 自签证书强制带有的 `get-task-allow=true` 风险），并配合 `P_TRACED` 持续监控与 `_dyld` 全量镜像/注入环境自检。
+- **内核级反调试 + 反符号劫持持续监控**：Release 包在启动时通过 Mach-O 原生桩调用 XNU `PT_DENY_ATTACH`（置位内核 `P_LNOATTACH` 拒绝外部 `lldb` / `debugserver` 附加，抵御免费 Apple ID 自签证书强制带有的 `get-task-allow=true` 风险），并配合 `P_TRACED` 持续监控、`_dyld` / `dladdr` 双重镜像路径反伪造、Mach-O `S_INTERPOSING` / `__interpose` 劫持段扫描及关键安全符号来源校验。
 - **全量符号与属性名反射剥离**：Release 二进制剥离全部本地符号、Swift 符号与存储属性反射名称（`-disable-reflection-names` + `strip -rSTx`），最大化逆向分析与 Hook 成本。
 - **全覆盖防截屏与全局输入卫生**：彻底移除相机/相册权限及普通明文密码/CVV 切换；全局关闭 UIKit 拼写检查与智能标点替换；卡号、有效期、CVV、安全备注均采用安全输入控件或置于安全渲染图层内（截屏与录屏自动空白）；切后台同步拉起顶层独立 UIKit 遮罩窗口；按电源键锁屏、手动锁定或倒计时归零均主动覆写清空剪贴板。
 

@@ -162,6 +162,8 @@ struct LockScreenView: View {
             }
             .padding(.horizontal, 26)
         }
+        .environment(\.colorScheme, .dark)
+        .preferredColorScheme(.dark)
         .task {
             guard !didAutoTriggerBiometrics else { return }
             didAutoTriggerBiometrics = true

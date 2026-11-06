@@ -4,7 +4,7 @@ import UIKit
 /// Explicit `UIWindowSceneDelegate` lifecycle compatible with iOS 16 through iOS 27+ strict scene enforcement.
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
-    private static var didConfigureInputHygiene = false
+    private static var inputHygieneObservers: [NSObjectProtocol] = []
 
     func scene(
         _ scene: UIScene,
@@ -26,23 +26,49 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         PrivacyShieldWindowManager.shared.refreshCaptureState()
     }
 
+    /// Enforces UIKit text-input hygiene on concrete `UITextField` / `UITextView` instances when editing begins.
+    /// IMPORTANT: Never invoke `UITextInputTraits` setters on `UIAppearance` proxies (`UITextField.appearance()`),
+    /// as `UITextInputTraits` properties are not `UI_APPEARANCE_SELECTOR`s and trigger `NSInternalInconsistencyException`
+    /// inside `PushNextClassForSettingIMP` when a text field moves into a `UIWindow`.
     private static func configureGlobalInputHygieneOnce() {
-        guard !didConfigureInputHygiene else { return }
-        didConfigureInputHygiene = true
+        guard inputHygieneObservers.isEmpty else { return }
+        let center = NotificationCenter.default
 
-        let textFieldProxy = UITextField.appearance()
-        textFieldProxy.autocorrectionType = .no
-        textFieldProxy.spellCheckingType = .no
-        textFieldProxy.smartQuotesType = .no
-        textFieldProxy.smartDashesType = .no
-        textFieldProxy.smartInsertDeleteType = .no
+        inputHygieneObservers.append(
+            center.addObserver(
+                forName: UITextField.textDidBeginEditingNotification,
+                object: nil,
+                queue: .main
+            ) { notification in
+                guard let field = notification.object as? UITextField else { return }
+                if field.autocorrectionType != .no { field.autocorrectionType = .no }
+                if field.spellCheckingType != .no { field.spellCheckingType = .no }
+                if field.smartQuotesType != .no { field.smartQuotesType = .no }
+                if field.smartDashesType != .no { field.smartDashesType = .no }
+                if field.smartInsertDeleteType != .no { field.smartInsertDeleteType = .no }
+                if #available(iOS 17.0, *), field.inlinePredictionType != .no {
+                    field.inlinePredictionType = .no
+                }
+            }
+        )
 
-        let textViewProxy = UITextView.appearance()
-        textViewProxy.autocorrectionType = .no
-        textViewProxy.spellCheckingType = .no
-        textViewProxy.smartQuotesType = .no
-        textViewProxy.smartDashesType = .no
-        textViewProxy.smartInsertDeleteType = .no
+        inputHygieneObservers.append(
+            center.addObserver(
+                forName: UITextView.textDidBeginEditingNotification,
+                object: nil,
+                queue: .main
+            ) { notification in
+                guard let textView = notification.object as? UITextView else { return }
+                if textView.autocorrectionType != .no { textView.autocorrectionType = .no }
+                if textView.spellCheckingType != .no { textView.spellCheckingType = .no }
+                if textView.smartQuotesType != .no { textView.smartQuotesType = .no }
+                if textView.smartDashesType != .no { textView.smartDashesType = .no }
+                if textView.smartInsertDeleteType != .no { textView.smartInsertDeleteType = .no }
+                if #available(iOS 17.0, *), textView.inlinePredictionType != .no {
+                    textView.inlinePredictionType = .no
+                }
+            }
+        )
     }
 }
 

@@ -329,21 +329,42 @@ enum RuntimeSecurity {
         }
     }
 
-    /// Validates the structural integrity of a Darwin `dyld_cache_header` (`dyld_v1`) in memory.
+    /// Validates the structural integrity of a Darwin `dyld_cache_header` (`dyld_v1`) in memory,
+    /// matching Apple `dyld` (`validMagic` + `preflightCacheFile`) across `arm64e`, `arm64e.x1` (`"dyld_v1arm64ex1\0"`),
+    /// `arm64e.x2`, `arm64`, `arm64_32`, and split/read-only header mappings.
     static func isValidSharedCacheHeader(start: UnsafeRawPointer, length: Int) -> Bool {
         let minimumCacheBytes = 16 * 1024 * 1024
         guard length >= minimumCacheBytes, length < (1 << 36) else { return false }
         let lower = UInt(bitPattern: start)
         guard (lower & 0xFFF) == 0 else { return false }
 
-        // 1. Magic must start with 8-byte "dyld_v1 " and terminate with '\0' at byte 15.
-        let expectedMagicPrefix: [UInt8] = [0x64, 0x79, 0x6C, 0x64, 0x5F, 0x76, 0x31, 0x20]
+        // 1. Magic is a 16-byte right-justified C string: "dyld_v1" (7 bytes) + optional spaces + archName + '\0' at byte 15.
+        // Note: 8-char arch names such as `arm64ex1` (A20 / iPhone19,x) or `arm64_32` have ZERO spaces at byte 7 ("dyld_v1arm64ex1\0").
+        let expectedMagicPrefix: [UInt8] = [0x64, 0x79, 0x6C, 0x64, 0x5F, 0x76, 0x31] // "dyld_v1"
         for i in 0..<expectedMagicPrefix.count {
             if start.load(fromByteOffset: i, as: UInt8.self) != expectedMagicPrefix[i] {
                 return false
             }
         }
         guard start.load(fromByteOffset: 15, as: UInt8.self) == 0 else { return false }
+
+        var archStart = 7
+        while archStart < 15 && start.load(fromByteOffset: archStart, as: UInt8.self) == 0x20 {
+            archStart += 1
+        }
+        // Require a non-empty valid ASCII architecture identifier (at least 3 chars, e.g. "i386", "arm64", "arm64e", "arm64ex1").
+        guard archStart <= 12 else { return false }
+        for i in archStart..<15 {
+            let b = start.load(fromByteOffset: i, as: UInt8.self)
+            let isArchChar = (b >= 0x30 && b <= 0x39)
+                || (b >= 0x41 && b <= 0x5A)
+                || (b >= 0x61 && b <= 0x7A)
+                || b == 0x5F
+                || b == 0x2E
+            if !isArchChar {
+                return false
+            }
+        }
 
         // 2. Validate mapping table offset & count (`mappingOffset` at +16, `mappingCount` at +20).
         let mappingOffset = start.load(fromByteOffset: 16, as: UInt32.self)
@@ -357,18 +378,25 @@ enum RuntimeSecurity {
             return false
         }
 
-        // 3. Validate mapping[0] (`dyld_cache_mapping_info` = 32 bytes): fileOffset == 0 and read+execute non-writable!
+        // 3. Validate mapping[0] (`dyld_cache_mapping_info` = 32 bytes):
+        //    fileOffset == 0 and strictly non-writable (`r--` 0x01 for multi-mapping RO headers or `r-x` 0x05, matching dyld's preflightCacheFile).
         let m0Base = Int(mappingOffset)
         let m0Size = start.load(fromByteOffset: m0Base + 8, as: UInt64.self)
         let m0FileOffset = start.load(fromByteOffset: m0Base + 16, as: UInt64.self)
         let m0MaxProt = start.load(fromByteOffset: m0Base + 24, as: UInt32.self)
         let m0InitProt = start.load(fromByteOffset: m0Base + 28, as: UInt32.self)
-        let rxNonWritable: UInt32 = 0x05 // VM_PROT_READ (1) | VM_PROT_EXECUTE (4), no VM_PROT_WRITE (2)
+        let roNonWritable: UInt32 = 0x01 // VM_PROT_READ
+        let rxNonWritable: UInt32 = 0x05 // VM_PROT_READ | VM_PROT_EXECUTE
+        let validMaxProt = mappingCount >= 2
+            ? (m0MaxProt == roNonWritable || m0MaxProt == rxNonWritable)
+            : (m0MaxProt == rxNonWritable)
+        let validInitProt = (m0InitProt == roNonWritable || m0InitProt == rxNonWritable)
+            && (m0InitProt & ~m0MaxProt) == 0
         guard m0Size >= 0x4000,
               m0Size <= UInt64(length),
               m0FileOffset == 0,
-              m0MaxProt == rxNonWritable,
-              m0InitProt == rxNonWritable else {
+              validMaxProt,
+              validInitProt else {
             return false
         }
 
@@ -418,8 +446,10 @@ enum RuntimeSecurity {
             return nil
         }
 
-        // Cross-check loaded images: no untrusted or main-executable Mach-O image may ever reside inside cacheRange.
+        // Cross-check loaded images: at least one trusted system dylib must reside inside cacheRange (defeating
+        // disjoint anonymous mmap fake caches), and NO untrusted or main-executable image may ever reside inside it.
         let totalImages = _dyld_image_count()
+        var trustedImagesInCache = 0
         for idx in 0..<totalImages {
             guard let hdr = _dyld_get_image_header(idx) else { continue }
             let hdrAddr = UInt(bitPattern: hdr)
@@ -434,7 +464,12 @@ enum RuntimeSecurity {
                     appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
                     return nil
                 }
+                trustedImagesInCache += 1
             }
+        }
+        if trustedImagesInCache == 0 {
+            appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
+            return nil
         }
         return range
     }

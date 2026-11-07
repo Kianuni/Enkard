@@ -319,6 +319,30 @@ final class VaultCryptoTests: XCTestCase {
         forged.storeBytes(of: UInt32(5), toByteOffset: 0x100 + 28, as: UInt32.self)
         // Still all-zero cache UUID at 0x58..<0x68 -> must fail!
         XCTAssertFalse(RuntimeSecurity.isValidSharedCacheHeader(start: UnsafeRawPointer(forged), length: 512 * 1024 * 1024))
+
+        // Variant 3: Genuine iPhone19,7 (`arm64e.x1`) 0-space magic `"dyld_v1arm64ex1\0"` + non-zero UUID:
+        // must PASS both for `r-x` (0x05) single-mapping AND `r--` (0x01) multi-mapping RO headers!
+        forged.storeBytes(of: UInt64(0x164A7885_37533172), toByteOffset: 0x58, as: UInt64.self)
+        _ = "dyld_v1arm64ex1".withCString { src in
+            memcpy(forged, src, 16) // includes '\0' at byte 15
+        }
+        XCTAssertTrue(RuntimeSecurity.isValidSharedCacheHeader(start: UnsafeRawPointer(forged), length: 512 * 1024 * 1024))
+
+        // Multi-mapping (`mappingCount == 3`) with `r--` (0x01) RO header mapping[0] -> must PASS!
+        forged.storeBytes(of: UInt32(3), toByteOffset: 20, as: UInt32.self)
+        forged.storeBytes(of: UInt32(1), toByteOffset: 0x100 + 24, as: UInt32.self)
+        forged.storeBytes(of: UInt32(1), toByteOffset: 0x100 + 28, as: UInt32.self)
+        XCTAssertTrue(RuntimeSecurity.isValidSharedCacheHeader(start: UnsafeRawPointer(forged), length: 512 * 1024 * 1024))
+
+        // Single-mapping (`mappingCount == 1`) with `r--` (0x01) or blank arch `"dyld_v1        \0"` -> must FAIL!
+        forged.storeBytes(of: UInt32(1), toByteOffset: 20, as: UInt32.self)
+        XCTAssertFalse(RuntimeSecurity.isValidSharedCacheHeader(start: UnsafeRawPointer(forged), length: 512 * 1024 * 1024))
+        forged.storeBytes(of: UInt32(5), toByteOffset: 0x100 + 24, as: UInt32.self)
+        forged.storeBytes(of: UInt32(5), toByteOffset: 0x100 + 28, as: UInt32.self)
+        _ = "dyld_v1        ".withCString { src in
+            memcpy(forged, src, 16)
+        }
+        XCTAssertFalse(RuntimeSecurity.isValidSharedCacheHeader(start: UnsafeRawPointer(forged), length: 512 * 1024 * 1024))
     }
 
     @MainActor

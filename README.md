@@ -1,4 +1,4 @@
-# Enkard (v2.3.0)：银行级+ · 断网零同步 · 极简零相机权限 iPhone 银行卡硬件保险库
+# Enkard (v2.3.1)：银行级+ · 断网零同步 · 极简零相机权限 iPhone 银行卡硬件保险库
 
 **Enkard** 是专为 iPhone 自签场景打造的纯离线原生银行卡加密保险库，仅使用 Apple 系统核心安全框架（`SwiftUI` + `CryptoKit` + `SecureEnclave` + `CommonCrypto` + `Security` + `LocalAuthentication`），**零第三方依赖、零网络代码、零相机/相册权限、内置进程级断网拦截器、禁绝一切云同步**。
 

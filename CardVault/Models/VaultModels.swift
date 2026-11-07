@@ -51,6 +51,8 @@ struct VaultEnvelope: Codable, Sendable {
 
 struct VaultPlaintextPayload: Codable, Sendable {
     static let currentSchemaVersion = 3
+    /// Hard upper bound (`2^62`) preventing `UInt64.max + 1` arithmetic traps on subsequent saves.
+    static let maximumValidGeneration: UInt64 = (1 << 62)
 
     var schemaVersion: Int
     /// Matches `VaultEnvelope.vaultID` on v2+ envelopes to defeat cross-vault payload transplanting.

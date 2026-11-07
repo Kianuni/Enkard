@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import Security
@@ -137,12 +138,207 @@ enum KeychainStateStore {
     }
 }
 
+// MARK: - Device-Bound HMAC Authenticator for Keychain Security State (v2.3+)
+
+enum AuthenticatedKeychainStateRead: Equatable, Sendable {
+    case found(Data)
+    case notFound
+    case unavailable
+    case corrupted
+}
+
+/// Cryptographically authenticates Keychain security state (`vault_identity_v2`, `unlock_lockout`, `local_preferences_v2`)
+/// using a 256-bit `WhenUnlockedThisDeviceOnly` HMAC-SHA256 key (`state_hmac_key_v2`), binding each record to its exact
+/// account name (`"ENKARD_STATE_HMAC_V1"`). Defeats Keychain JSON tampering, cross-account swapping, and MAC stripping,
+/// while performing a crash-safe one-time migration of existing `v2.2` plain-JSON records on first launch.
+enum KeychainStateAuthenticator {
+    static let hmacKeyAccount = "state_hmac_key_v2"
+    private static let envelopeMagic = Data("EKM1".utf8) // 4 bytes
+    private static let domainPrefix = Data("ENKARD_STATE_HMAC_V1|".utf8)
+    private static let tagByteCount = 32
+    private static let managedAccounts = [
+        "vault_identity_v2",
+        "local_preferences_v2",
+        "unlock_lockout"
+    ]
+
+    private enum KeyBootstrapState {
+        case ready(SymmetricKey)
+        case noKeyAndStoreEmpty
+        case unavailable
+        case corrupted
+    }
+
+    static func readAuthenticated(
+        account: String,
+        using backend: any KeychainStateBackend = SystemKeychainBackend()
+    ) -> AuthenticatedKeychainStateRead {
+        switch bootstrapKeyIfNeeded(createWhenEmpty: false, using: backend) {
+        case .unavailable:
+            return .unavailable
+        case .corrupted:
+            return .corrupted
+        case .noKeyAndStoreEmpty:
+            return .notFound
+        case .ready(let hmacKey):
+            switch backend.readResult(account) {
+            case .notFound:
+                return .notFound
+            case .unavailable:
+                return .unavailable
+            case .found(let blob):
+                guard let verified = openAuthenticatedBlob(blob, account: account, using: hmacKey) else {
+                    return .corrupted
+                }
+                return .found(verified)
+            }
+        }
+    }
+
+    @discardableResult
+    static func writeAuthenticated(
+        _ payload: Data,
+        account: String,
+        using backend: any KeychainStateBackend = SystemKeychainBackend()
+    ) -> Bool {
+        guard case .ready(let hmacKey) = bootstrapKeyIfNeeded(createWhenEmpty: true, using: backend) else {
+            return false
+        }
+        let sealed = sealAuthenticatedBlob(payload, account: account, using: hmacKey)
+        return backend.write(sealed, account: account)
+    }
+
+    static func clearKey(using backend: any KeychainStateBackend = SystemKeychainBackend()) {
+        backend.delete(hmacKeyAccount)
+    }
+
+    private static func bootstrapKeyIfNeeded(
+        createWhenEmpty: Bool,
+        using backend: any KeychainStateBackend
+    ) -> KeyBootstrapState {
+        switch backend.readResult(hmacKeyAccount) {
+        case .unavailable:
+            return .unavailable
+        case .found(var keyData):
+            defer { SecureZero.wipe(&keyData) }
+            guard keyData.count == 32 else {
+                return .corrupted
+            }
+            return .ready(SymmetricKey(data: keyData))
+        case .notFound:
+            // Inspect all managed state accounts before creating a key:
+            // 1) If any is `.unavailable`, fail closed without creating a key.
+            // 2) If any already carries `"EKM1"`, the HMAC key was maliciously deleted — fail closed (`.corrupted`)!
+            // 3) Upgrade any valid pre-v2.3 plain JSON records atomically before persisting the new HMAC key.
+            var legacyPayloads: [(account: String, data: Data)] = []
+            var anyAccountPresent = false
+            for acct in managedAccounts {
+                switch backend.readResult(acct) {
+                case .unavailable:
+                    return .unavailable
+                case .notFound:
+                    continue
+                case .found(let existingBlob):
+                    anyAccountPresent = true
+                    if existingBlob.starts(with: envelopeMagic) {
+                        return .corrupted
+                    }
+                    if isValidLegacyPlainRecord(existingBlob, forAccount: acct) {
+                        legacyPayloads.append((acct, existingBlob))
+                    }
+                }
+            }
+
+            if !anyAccountPresent && !createWhenEmpty {
+                return .noKeyAndStoreEmpty
+            }
+
+            var keyBytes = [UInt8](repeating: 0, count: 32)
+            defer { SecureZero.wipe(&keyBytes) }
+            guard SecRandomCopyBytes(kSecRandomDefault, 32, &keyBytes) == errSecSuccess else {
+                return .unavailable
+            }
+            var keyData = Data(keyBytes)
+            defer { SecureZero.wipe(&keyData) }
+            let hmacKey = SymmetricKey(data: keyData)
+
+            // Re-wrap all valid pre-v2.3 plain JSON records first, then persist `state_hmac_key_v2`.
+            for item in legacyPayloads {
+                let wrapped = sealAuthenticatedBlob(item.data, account: item.account, using: hmacKey)
+                guard backend.write(wrapped, account: item.account) else {
+                    return .unavailable
+                }
+            }
+            guard backend.write(keyData, account: hmacKeyAccount) else {
+                return .unavailable
+            }
+            return .ready(hmacKey)
+        }
+    }
+
+    private static func isValidLegacyPlainRecord(_ data: Data, forAccount account: String) -> Bool {
+        switch account {
+        case "vault_identity_v2":
+            guard let rec = try? JSONDecoder().decode(VaultIdentityRecord.self, from: data) else { return false }
+            return rec.isValid
+        case "local_preferences_v2":
+            return (try? JSONDecoder().decode(VaultPreferences.self, from: data)) != nil
+        case "unlock_lockout":
+            guard let rec = try? JSONDecoder().decode(LockoutRecord.self, from: data) else { return false }
+            return rec.isValid
+        default:
+            return false
+        }
+    }
+
+    private static func makeMACInput(account: String, payload: Data) -> Data {
+        let acctBytes = Data(account.utf8)
+        var msg = Data(capacity: domainPrefix.count + 4 + acctBytes.count + payload.count)
+        msg.append(domainPrefix)
+        var acctLenBE = UInt32(acctBytes.count).bigEndian
+        withUnsafeBytes(of: &acctLenBE) { msg.append(contentsOf: $0) }
+        msg.append(acctBytes)
+        msg.append(payload)
+        return msg
+    }
+
+    private static func sealAuthenticatedBlob(_ payload: Data, account: String, using key: SymmetricKey) -> Data {
+        let macInput = makeMACInput(account: account, payload: payload)
+        let tag = HMAC<SHA256>.authenticationCode(for: macInput, using: key)
+        var out = Data(capacity: envelopeMagic.count + tagByteCount + payload.count)
+        out.append(envelopeMagic)
+        out.append(contentsOf: tag)
+        out.append(payload)
+        return out
+    }
+
+    private static func openAuthenticatedBlob(_ blob: Data, account: String, using key: SymmetricKey) -> Data? {
+        let headerLen = envelopeMagic.count + tagByteCount
+        guard blob.count > headerLen, blob.starts(with: envelopeMagic) else {
+            return nil
+        }
+        let tagSlice = Data(blob[envelopeMagic.count..<headerLen])
+        let payload = Data(blob[headerLen..<blob.count])
+        let macInput = makeMACInput(account: account, payload: payload)
+        guard HMAC<SHA256>.isValidAuthenticationCode(tagSlice, authenticating: macInput, using: key) else {
+            return nil
+        }
+        return payload
+    }
+}
+
 // MARK: - Anti-rollback & anti-replacement vault identity store
 
 struct VaultIdentityRecord: Codable, Equatable, Sendable {
     var vaultID: UUID?
     var generation: UInt64
     var envelopeVersion: Int
+
+    var isValid: Bool {
+        envelopeVersion >= 1
+            && envelopeVersion <= 100
+            && generation < VaultPlaintextPayload.maximumValidGeneration
+    }
 }
 
 enum VaultIdentityState: Equatable, Sendable {
@@ -157,14 +353,16 @@ enum VaultIdentityStore {
     private static let legacyAccount = "vault_generation"
 
     static func readState(using backend: any KeychainStateBackend = SystemKeychainBackend()) -> VaultIdentityState {
-        switch backend.readResult(account) {
+        switch KeychainStateAuthenticator.readAuthenticated(account: account, using: backend) {
         case .found(let data):
-            if let decoded = try? JSONDecoder().decode(VaultIdentityRecord.self, from: data) {
+            if let decoded = try? JSONDecoder().decode(VaultIdentityRecord.self, from: data), decoded.isValid {
                 return .found(decoded)
             }
             return .corrupted
         case .unavailable:
             return .unavailable
+        case .corrupted:
+            return .corrupted
         case .notFound:
             // Migrate v1 generation integer if present, failing closed on transient unavailability.
             switch backend.readResult(legacyAccount) {
@@ -172,7 +370,8 @@ enum VaultIdentityStore {
                 return .unavailable
             case .found(let legacyData):
                 if let text = String(data: legacyData, encoding: .utf8),
-                   let gen = UInt64(text) {
+                   let gen = UInt64(text),
+                   gen < VaultPlaintextPayload.maximumValidGeneration {
                     let migrated = VaultIdentityRecord(vaultID: nil, generation: gen, envelopeVersion: 1)
                     if write(migrated, using: backend) {
                         backend.delete(legacyAccount)
@@ -206,24 +405,31 @@ enum VaultIdentityStore {
 
     @discardableResult
     static func write(_ record: VaultIdentityRecord, using backend: any KeychainStateBackend = SystemKeychainBackend()) -> Bool {
-        guard let data = try? JSONEncoder().encode(record) else { return false }
-        return backend.write(data, account: account)
+        guard record.isValid, let data = try? JSONEncoder().encode(record) else { return false }
+        return KeychainStateAuthenticator.writeAuthenticated(data, account: account, using: backend)
     }
 
-    /// Monotonically advances `(generation, envelopeVersion)` without ever regressing an existing watermark.
+    /// Monotonically advances `(generation, envelopeVersion)` without ever regressing an existing watermark
+    /// or overwriting an already-established `vaultID` with a foreign vault's ID.
     @discardableResult
     static func advanceWatermark(
         _ candidate: VaultIdentityRecord,
         using backend: any KeychainStateBackend = SystemKeychainBackend()
     ) -> Bool {
+        guard candidate.isValid else { return false }
         switch readState(using: backend) {
         case .unavailable, .corrupted:
             return false
         case .notFound:
             return write(candidate, using: backend)
         case .found(let existing):
+            if let existingID = existing.vaultID,
+               let candidateID = candidate.vaultID,
+               existingID != candidateID {
+                return false
+            }
             let merged = VaultIdentityRecord(
-                vaultID: candidate.vaultID ?? existing.vaultID,
+                vaultID: existing.vaultID ?? candidate.vaultID,
                 generation: max(existing.generation, candidate.generation),
                 envelopeVersion: max(existing.envelopeVersion, candidate.envelopeVersion)
             )
@@ -257,8 +463,8 @@ enum VaultPreferencesStore {
         "cardvault.pref.wipeAfterFailedAttempts"
     ]
 
-    static func load() -> VaultPreferences {
-        if let data = KeychainStateStore.read(account),
+    static func load(using backend: any KeychainStateBackend = SystemKeychainBackend()) -> VaultPreferences {
+        if case .found(let data) = KeychainStateAuthenticator.readAuthenticated(account: account, using: backend),
            let decoded = try? JSONDecoder().decode(VaultPreferences.self, from: data) {
             purgeLegacyUserDefaults()
             return decoded
@@ -280,20 +486,23 @@ enum VaultPreferencesStore {
                 prefs.clipboardClearDurationRaw = v
             }
             prefs.wipeAfterFailedAttempts = defaults.bool(forKey: "cardvault.pref.wipeAfterFailedAttempts")
-            save(prefs)
+            save(prefs, using: backend)
             purgeLegacyUserDefaults()
         }
         return prefs
     }
 
     @discardableResult
-    static func save(_ prefs: VaultPreferences) -> Bool {
+    static func save(
+        _ prefs: VaultPreferences,
+        using backend: any KeychainStateBackend = SystemKeychainBackend()
+    ) -> Bool {
         guard let data = try? JSONEncoder().encode(prefs) else { return false }
-        return KeychainStateStore.write(data, account: account)
+        return KeychainStateAuthenticator.writeAuthenticated(data, account: account, using: backend)
     }
 
-    static func clear() {
-        KeychainStateStore.delete(account)
+    static func clear(using backend: any KeychainStateBackend = SystemKeychainBackend()) {
+        backend.delete(account)
         purgeLegacyUserDefaults()
     }
 
@@ -314,6 +523,21 @@ struct LockoutRecord: Codable, Equatable, Sendable {
     var bootSession: String?
     /// True when the user activated Emergency Lockdown ("紧急锁定") to force master-password-only entry.
     var isLockdownActive: Bool = false
+
+    var isValid: Bool {
+        guard failures >= 0,
+              lockDurationSeconds >= 0,
+              lockDurationSeconds <= 86_400 else {
+            return false
+        }
+        if failures >= LockoutPolicy.biometricSuspensionThreshold {
+            let expectedMin = LockoutPolicy.lockoutSeconds(forFailures: failures)
+            if lockDurationSeconds < expectedMin {
+                return false
+            }
+        }
+        return true
+    }
 }
 
 enum LockoutPolicy {
@@ -340,14 +564,19 @@ enum LockoutPolicy {
         nowMonotonicNs: UInt64,
         currentBootSession: String
     ) -> (remaining: Int, needsRestart: Bool) {
-        guard let start = record.lockStartMonotonicNs, record.lockDurationSeconds > 0 else {
+        let boundedDuration = min(86_400, max(0, record.lockDurationSeconds))
+        guard let start = record.lockStartMonotonicNs, boundedDuration > 0 else {
             return (0, false)
         }
         guard record.bootSession == currentBootSession, nowMonotonicNs >= start else {
-            return (record.lockDurationSeconds, true)
+            return (boundedDuration, true)
         }
-        let elapsed = Int((nowMonotonicNs - start) / 1_000_000_000)
-        return (max(0, record.lockDurationSeconds - elapsed), false)
+        let elapsedSecondsU64 = (nowMonotonicNs - start) / 1_000_000_000
+        let durationU64 = UInt64(boundedDuration)
+        if elapsedSecondsU64 >= durationU64 {
+            return (0, false)
+        }
+        return (Int(durationU64 - elapsedSecondsU64), false)
     }
 }
 
@@ -365,12 +594,12 @@ final class LockoutGuard {
     }
 
     /// Ensures we never overwrite an existing Keychain lockout/lockdown record if `init()` ran while
-    /// Keychain was momentarily locked (`errSecInteractionNotAllowed`), and fails closed on corruption.
+    /// Keychain was momentarily locked (`errSecInteractionNotAllowed`), and fails closed on corruption/tampering.
     private func reloadIfNeeded() {
         guard !hasLoadedAuthoritativeState else { return }
-        switch backend.readResult(Self.account) {
+        switch KeychainStateAuthenticator.readAuthenticated(account: Self.account, using: backend) {
         case .found(let data):
-            if let decoded = try? JSONDecoder().decode(LockoutRecord.self, from: data) {
+            if let decoded = try? JSONDecoder().decode(LockoutRecord.self, from: data), decoded.isValid {
                 record = decoded
                 hasLoadedAuthoritativeState = true
                 isStateUnreadable = false
@@ -381,7 +610,7 @@ final class LockoutGuard {
             record = LockoutRecord()
             hasLoadedAuthoritativeState = true
             isStateUnreadable = false
-        case .unavailable:
+        case .unavailable, .corrupted:
             isStateUnreadable = true
         }
     }
@@ -444,6 +673,18 @@ final class LockoutGuard {
         return true
     }
 
+    /// Rolls back the pre-KDF increment ONLY when an operation aborted due to a non-authentication environmental fault
+    /// (e.g. transient Secure Enclave / Keychain unavailability), preventing hardware glitches from triggering wipe.
+    func rollbackNonAuthenticationFault(restoring previous: LockoutRecord) {
+        guard hasLoadedAuthoritativeState, !isStateUnreadable, previous.isValid else { return }
+        if previous.failures == 0 && !previous.isLockdownActive {
+            backend.delete(Self.account)
+            record = previous
+        } else if persist(previous) {
+            record = previous
+        }
+    }
+
     @discardableResult
     func setLockdownActive(_ active: Bool) -> Bool {
         reloadIfNeeded()
@@ -473,8 +714,8 @@ final class LockoutGuard {
 
     @discardableResult
     private func persist(_ candidate: LockoutRecord) -> Bool {
-        guard let data = try? JSONEncoder().encode(candidate) else { return false }
-        return backend.write(data, account: Self.account)
+        guard candidate.isValid, let data = try? JSONEncoder().encode(candidate) else { return false }
+        return KeychainStateAuthenticator.writeAuthenticated(data, account: Self.account, using: backend)
     }
 
     /// CLOCK_MONOTONIC on Darwin keeps counting during sleep and ignores wall-clock changes.

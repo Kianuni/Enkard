@@ -10,6 +10,11 @@ import UIKit.UIGestureRecognizerSubclass
 @MainActor
 final class PrivacyShieldWindowManager {
     static let shared = PrivacyShieldWindowManager()
+    /// Strictly above both `.statusBar` (1000) and `.alert` (2000) so open confirmation dialogs / alerts
+    /// displaying card names or prompts are 100% covered in app-switcher snapshots and screen recordings.
+    static let shieldWindowLevel = UIWindow.Level(
+        rawValue: max(UIWindow.Level.alert.rawValue, UIWindow.Level.statusBar.rawValue) + 500
+    )
 
     enum Reason: Hashable {
         case inactive
@@ -35,45 +40,45 @@ final class PrivacyShieldWindowManager {
         let center = NotificationCenter.default
         observers.append(center.addObserver(
             forName: UIScene.willConnectNotification, object: nil, queue: nil
-        ) { [weak self] _ in
-            Self.performOnMain { self?.refreshCaptureState() }
+        ) { _ in
+            Self.performOnMain { Self.shared.refreshCaptureState() }
         })
         observers.append(center.addObserver(
             forName: UIScene.didActivateNotification, object: nil, queue: nil
-        ) { [weak self] _ in
+        ) { _ in
             Self.performOnMain {
-                self?.refreshCaptureState()
-                self?.installActivityMonitorIfNeeded()
+                Self.shared.refreshCaptureState()
+                Self.shared.installActivityMonitorIfNeeded()
             }
         })
         observers.append(center.addObserver(
             forName: UIApplication.willResignActiveNotification, object: nil, queue: nil
-        ) { [weak self] _ in
-            Self.performOnMain { self?.setReason(.inactive, active: true) }
+        ) { _ in
+            Self.performOnMain { Self.shared.setReason(.inactive, active: true) }
         })
         observers.append(center.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil
-        ) { [weak self] _ in
-            Self.performOnMain { self?.setReason(.inactive, active: true) }
+        ) { _ in
+            Self.performOnMain { Self.shared.setReason(.inactive, active: true) }
         })
         observers.append(center.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: nil
-        ) { [weak self] _ in
+        ) { _ in
             Self.performOnMain {
-                self?.refreshCaptureState()
-                self?.installActivityMonitorIfNeeded()
+                Self.shared.refreshCaptureState()
+                Self.shared.installActivityMonitorIfNeeded()
                 // Keep the shield up until VaultStore has re-evaluated auto-lock on return and SwiftUI has
                 // committed the locked UI, so unlocked card content can never flash for a single frame.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                     guard UIApplication.shared.applicationState == .active else { return }
-                    self?.setReason(.inactive, active: false)
+                    Self.shared.setReason(.inactive, active: false)
                 }
             }
         })
         observers.append(center.addObserver(
             forName: UIScreen.capturedDidChangeNotification, object: nil, queue: nil
-        ) { [weak self] _ in
-            Self.performOnMain { self?.refreshCaptureState() }
+        ) { _ in
+            Self.performOnMain { Self.shared.refreshCaptureState() }
         })
 
         refreshCaptureState()
@@ -81,7 +86,7 @@ final class PrivacyShieldWindowManager {
 
     /// Executes synchronously when already on the main thread (preserving 0ms snapshot protection),
     /// and hops safely to the main queue if a system notification ever posts off-main-thread.
-    private nonisolated static func performOnMain(_ block: @escaping @MainActor () -> Void) {
+    private nonisolated static func performOnMain(_ block: @escaping @Sendable @MainActor () -> Void) {
         if Thread.isMainThread {
             MainActor.assumeIsolated(block)
         } else {
@@ -120,7 +125,7 @@ final class PrivacyShieldWindowManager {
             let host = UIHostingController(rootView: PrivacyShieldView(style: style))
             host.view.backgroundColor = .black
             let window = UIWindow(windowScene: scene)
-            window.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 100)
+            window.windowLevel = Self.shieldWindowLevel
             window.rootViewController = host
             window.isHidden = false
             shieldWindow = window

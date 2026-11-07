@@ -260,6 +260,14 @@ struct SecuritySettingsView: View {
                     dismiss()
                 }
             }
+            .onValueChange(of: store.isScreenCaptured) { captured in
+                if captured {
+                    exportDocument = nil
+                    showingExportPasswordPrompt = false
+                    showingFileExporter = false
+                    showingWipeConfirm = false
+                }
+            }
             .onValueChange(of: store.phase) { newPhase in
                 if newPhase != .unlocked {
                     exportDocument = nil
@@ -270,6 +278,7 @@ struct SecuritySettingsView: View {
                     showingImportSheet = false
                     showingChangePassword = false
                     showingDestroySheet = false
+                    showingWipeConfirm = false
                     dismiss()
                 }
             }
@@ -460,6 +469,18 @@ private struct ExportBackupPasswordSheet: View {
                     errorText = "检测到截屏，已自动作废旧恢复口令并生成新口令。"
                 }
             }
+            .onValueChange(of: store.phase) { newPhase in
+                if newPhase != .unlocked {
+                    scrubSecrets()
+                    dismiss()
+                }
+            }
+            .onValueChange(of: store.isScreenCaptured) { captured in
+                if captured {
+                    scrubSecrets()
+                    dismiss()
+                }
+            }
             .onDisappear {
                 scrubSecrets()
             }
@@ -537,6 +558,12 @@ private struct ImportBackupSheet: View {
                         }
                     }
                     .disabled(backupPassword.isEmpty || store.isBusy)
+                }
+            }
+            .onValueChange(of: store.phase) { newPhase in
+                if newPhase != .unlocked {
+                    backupPassword = ""
+                    dismiss()
                 }
             }
             .onDisappear {
@@ -621,6 +648,12 @@ private struct ChangeMasterPasswordSheet: View {
                     )
                 }
             }
+            .onValueChange(of: store.phase) { newPhase in
+                if newPhase != .unlocked {
+                    scrubState()
+                    dismiss()
+                }
+            }
             .onDisappear {
                 scrubState()
             }
@@ -688,6 +721,13 @@ private struct DestroyVaultConfirmSheet: View {
                         }
                     }
                     .disabled(confirmText != "销毁" || masterPassword.isEmpty || store.isBusy)
+                }
+            }
+            .onValueChange(of: store.phase) { newPhase in
+                if newPhase != .unlocked {
+                    confirmText = ""
+                    masterPassword = ""
+                    dismiss()
                 }
             }
             .onDisappear {

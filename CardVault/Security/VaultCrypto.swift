@@ -45,6 +45,32 @@ enum VaultCryptoError: LocalizedError, Equatable {
     }
 }
 
+/// Guaranteed non-elidable memory zeroization backed by Darwin C11 `memset_s`
+/// (immune to LLVM `-O` Dead-Store Elimination, unlike manual index loops or sliced `Data.resetBytes`).
+enum SecureZero {
+    @inline(__always)
+    static func wipe(_ bytes: inout [UInt8]) {
+        guard !bytes.isEmpty else { return }
+        let count = bytes.count
+        bytes.withUnsafeMutableBytes { raw in
+            if let base = raw.baseAddress {
+                _ = memset_s(base, count, 0, count)
+            }
+        }
+    }
+
+    @inline(__always)
+    static func wipe(_ data: inout Data) {
+        guard !data.isEmpty else { return }
+        let count = data.count
+        data.withUnsafeMutableBytes { raw in
+            if let base = raw.baseAddress {
+                _ = memset_s(base, count, 0, count)
+            }
+        }
+    }
+}
+
 enum VaultCrypto {
     /// Lowest iteration count accepted when *reading* legacy files.
     static let minimumAcceptedIterations = 100_000
@@ -178,9 +204,9 @@ enum VaultCrypto {
         var passwordBytes = Array(effective.utf8)
         var derivedBytes = [UInt8](repeating: 0, count: keyByteCount)
         defer {
-            // Best-effort hygiene for owned byte buffers. (Swift `String`s cannot be reliably wiped.)
-            for i in passwordBytes.indices { passwordBytes[i] = 0 }
-            for i in derivedBytes.indices { derivedBytes[i] = 0 }
+            // Non-elidable C11 `memset_s` zeroization of owned byte buffers.
+            SecureZero.wipe(&passwordBytes)
+            SecureZero.wipe(&derivedBytes)
         }
 
         let passwordCount = passwordBytes.count
@@ -328,18 +354,27 @@ enum VaultCrypto {
         return (payload, dek, needsUpgrade)
     }
 
+    /// Distinguishes genuine password mismatch (`authenticationFailed`) from transient Secure Enclave / Keychain
+    /// unavailability (`hardwareKeyUnavailable`) so re-auth never counts hardware faults toward permanent vault wipe.
+    static func verifyLocalPasswordThrowing(
+        _ password: String,
+        against envelope: VaultEnvelope,
+        hardwareKeys: any HardwareKeyProvider
+    ) throws {
+        if envelope.magic == VaultEnvelope.legacyMagicV1 && envelope.version == VaultEnvelope.legacyVersionV1 {
+            _ = try unwrapLegacyDEKV1(envelope: envelope, password: password)
+            return
+        }
+        try validateV2Header(envelope, expectedDomain: .localVault)
+        _ = try unwrapLocalDEKV2(envelope: envelope, password: password, hardwareKeys: hardwareKeys)
+    }
+
     static func verifyLocalPassword(
         _ password: String,
         against envelope: VaultEnvelope,
         hardwareKeys: any HardwareKeyProvider
     ) -> Bool {
-        if envelope.magic == VaultEnvelope.legacyMagicV1 && envelope.version == VaultEnvelope.legacyVersionV1 {
-            return (try? unwrapLegacyDEKV1(envelope: envelope, password: password)) != nil
-        }
-        guard (try? validateV2Header(envelope, expectedDomain: .localVault)) != nil else {
-            return false
-        }
-        return (try? unwrapLocalDEKV2(envelope: envelope, password: password, hardwareKeys: hardwareKeys)) != nil
+        (try? verifyLocalPasswordThrowing(password, against: envelope, hardwareKeys: hardwareKeys)) != nil
     }
 
     /// Decrypts the payload using an already-unwrapped DEK (e.g. from Biometric Keychain).
@@ -379,10 +414,16 @@ enum VaultCrypto {
         } catch {
             throw VaultCryptoError.authenticationFailed
         }
-        defer { paddedPlaintext.resetBytes(in: 0..<paddedPlaintext.count) }
+        defer { SecureZero.wipe(&paddedPlaintext) }
 
-        var unpaddedJSON = try unframePaddedPayloadV2(paddedPlaintext)
-        defer { unpaddedJSON.resetBytes(in: 0..<unpaddedJSON.count) }
+        // Copy into an independent uniquely-owned buffer (`Data(bytes:count:)`) rather than slicing `paddedPlaintext`,
+        // avoiding `_DataStorage` `refCount == 2` Copy-on-Write duplication during `defer` zeroization!
+        let jsonRange = try unframePaddedPayloadRangeV2(paddedPlaintext)
+        var unpaddedJSON: Data = paddedPlaintext.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return Data() }
+            return Data(bytes: base.advanced(by: jsonRange.lowerBound), count: jsonRange.count)
+        }
+        defer { SecureZero.wipe(&unpaddedJSON) }
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -395,6 +436,9 @@ enum VaultCrypto {
 
         guard decoded.vaultID == expectedVaultID else {
             throw VaultCryptoError.authenticationFailed
+        }
+        guard decoded.generation < VaultPlaintextPayload.maximumValidGeneration else {
+            throw VaultCryptoError.corruptedPayload
         }
         return decoded
     }
@@ -563,7 +607,7 @@ enum VaultCrypto {
         )
 
         var dekBytes = dek.withUnsafeBytes { Data($0) }
-        defer { dekBytes.resetBytes(in: 0..<dekBytes.count) }
+        defer { SecureZero.wipe(&dekBytes) }
 
         let sealed = try AES.GCM.seal(dekBytes, using: kek, nonce: AES.GCM.Nonce(), authenticating: wrapAAD)
         guard let combined = sealed.combined else {
@@ -717,7 +761,7 @@ enum VaultCrypto {
         var combinedIKM = Data(capacity: keyByteCount * 2)
         passwordKey.withUnsafeBytes { combinedIKM.append(contentsOf: $0) }
         hardwareSecret.withUnsafeBytes { combinedIKM.append(contentsOf: $0) }
-        defer { combinedIKM.resetBytes(in: 0..<combinedIKM.count) }
+        defer { SecureZero.wipe(&combinedIKM) }
 
         var info = Data()
         info.append(kekCombineInfoV2)
@@ -743,7 +787,7 @@ enum VaultCrypto {
         } catch {
             throw VaultCryptoError.authenticationFailed
         }
-        defer { dekBytes.resetBytes(in: 0..<dekBytes.count) }
+        defer { SecureZero.wipe(&dekBytes) }
 
         guard dekBytes.count == keyByteCount else {
             throw VaultCryptoError.authenticationFailed
@@ -762,6 +806,9 @@ enum VaultCrypto {
         wrappedDEK: Data,
         using key: SymmetricKey
     ) throws -> Data {
+        guard generation < VaultPlaintextPayload.maximumValidGeneration else {
+            throw VaultCryptoError.invalidEnvelopeFormat
+        }
         let payload = VaultPlaintextPayload(
             vaultID: vaultID,
             generation: generation,
@@ -771,10 +818,10 @@ enum VaultCrypto {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         var jsonData = try encoder.encode(payload)
-        defer { jsonData.resetBytes(in: 0..<jsonData.count) }
+        defer { SecureZero.wipe(&jsonData) }
 
         var framedData = try frameAndPadPayloadV2(jsonData)
-        defer { framedData.resetBytes(in: 0..<framedData.count) }
+        defer { SecureZero.wipe(&framedData) }
 
         let aad = makePayloadAADV2(
             magic: magic,
@@ -816,7 +863,7 @@ enum VaultCrypto {
         return buffer
     }
 
-    private static func unframePaddedPayloadV2(_ padded: Data) throws -> Data {
+    private static func unframePaddedPayloadRangeV2(_ padded: Data) throws -> Range<Int> {
         guard padded.count >= payloadPaddingBlockSize,
               padded.count % payloadPaddingBlockSize == 0 else {
             throw VaultCryptoError.corruptedPayload
@@ -836,7 +883,7 @@ enum VaultCrypto {
         for padByte in padded[(4 + jsonCount)..<padded.count] where padByte != 0 {
             throw VaultCryptoError.corruptedPayload
         }
-        return Data(padded[4..<(4 + jsonCount)])
+        return 4..<(4 + jsonCount)
     }
 
     /// Canonical length-prefixed AAD (impossible to forge collisions across field boundaries).
@@ -996,14 +1043,19 @@ enum VaultCrypto {
         } catch {
             throw VaultCryptoError.authenticationFailed
         }
-        defer { decryptedJSON.resetBytes(in: 0..<decryptedJSON.count) }
+        defer { SecureZero.wipe(&decryptedJSON) }
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
+        let decoded: VaultPlaintextPayload
         do {
-            return try decoder.decode(VaultPlaintextPayload.self, from: decryptedJSON)
+            decoded = try decoder.decode(VaultPlaintextPayload.self, from: decryptedJSON)
         } catch {
             throw VaultCryptoError.corruptedPayload
         }
+        guard decoded.generation < VaultPlaintextPayload.maximumValidGeneration else {
+            throw VaultCryptoError.corruptedPayload
+        }
+        return decoded
     }
 }

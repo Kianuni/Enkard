@@ -14,6 +14,11 @@ private func cardse_ptrace(
 ) -> CInt
 #endif
 
+@_silgen_name("_dyld_get_shared_cache_range")
+private func cardse_dyld_get_shared_cache_range(
+    _ length: UnsafeMutablePointer<Int>?
+) -> UnsafeRawPointer?
+
 struct RuntimeIntegrityReport: Equatable, Sendable {
     let isCompromised: Bool
     let antiDebugActive: Bool
@@ -43,12 +48,33 @@ struct RuntimeIntegrityReport: Equatable, Sendable {
 enum RuntimeSecurity {
     private static let ptDenyAttach: CInt = 31 // PT_DENY_ATTACH in <sys/ptrace.h>
     private static let pTracedFlag: Int32 = 0x00000800 // P_TRACED in <sys/proc.h>
-    private static let criticalSystemSymbols = [
-        "ptrace",
-        "sysctl",
-        "_dyld_get_image_name",
-        "dladdr",
-        "CCKeyDerivationPBKDF"
+    private static let libSystemUmbrellaPrefixes = [
+        "/usr/lib/system/",
+        "/usr/lib/libSystem.B.dylib"
+    ]
+    private static let securityFrameworkPrefixes = [
+        "/System/Library/Frameworks/Security.framework/"
+    ]
+    private static let criticalSystemSymbols: [(name: String, allowedPrefixes: [String])] = [
+        ("ptrace", libSystemUmbrellaPrefixes),
+        ("sysctl", libSystemUmbrellaPrefixes),
+        ("sysctlbyname", libSystemUmbrellaPrefixes),
+        ("access", libSystemUmbrellaPrefixes),
+        ("_dyld_get_shared_cache_range", libSystemUmbrellaPrefixes),
+        ("_dyld_get_image_name", libSystemUmbrellaPrefixes),
+        ("_dyld_get_image_header", libSystemUmbrellaPrefixes),
+        ("_dyld_image_count", libSystemUmbrellaPrefixes),
+        ("dladdr", libSystemUmbrellaPrefixes),
+        ("dlsym", libSystemUmbrellaPrefixes),
+        ("getenv", libSystemUmbrellaPrefixes),
+        ("CCKeyDerivationPBKDF", libSystemUmbrellaPrefixes),
+        ("CCCrypt", libSystemUmbrellaPrefixes),
+        ("memset_s", libSystemUmbrellaPrefixes),
+        ("SecRandomCopyBytes", securityFrameworkPrefixes),
+        ("SecItemCopyMatching", securityFrameworkPrefixes),
+        ("SecItemAdd", securityFrameworkPrefixes),
+        ("SecItemUpdate", securityFrameworkPrefixes),
+        ("SecItemDelete", securityFrameworkPrefixes)
     ]
 
     /// Sets XNU `P_LNOATTACH` on the current process in Release builds, rejecting external `lldb` / `debugserver`
@@ -58,18 +84,19 @@ enum RuntimeSecurity {
         #if DEBUG
         return false
         #else
-        _ = cardse_ptrace(ptDenyAttach, 0, nil, 0)
-        return true
+        return cardse_ptrace(ptDenyAttach, 0, nil, 0) == 0
         #endif
     }
 
-    /// Queries the kernel process table (`KERN_PROC_PID`) for `P_TRACED` (read-only, sandbox-safe).
+    /// Queries the kernel process table (`KERN_PROC_PID`) for `P_TRACED` (read-only, sandbox-safe, fail-closed).
     static func isDebuggerAttached() -> Bool {
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
         let result = sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0)
-        guard result == 0 else { return false }
+        // `sysctl(KERN_PROC_PID, getpid())` always succeeds (0) in the iOS app sandbox; failing closed
+        // prevents a `sysctl -> -1` interposer from masking an attached debugger (`P_TRACED`).
+        guard result == 0 else { return true }
         return (info.kp_proc.p_flag & pTracedFlag) != 0
     }
 
@@ -114,12 +141,25 @@ enum RuntimeSecurity {
             let rawNamePtr = _dyld_get_image_name(idx)
             let headerPtr = _dyld_get_image_header(idx)
 
-            let dyldPath = rawNamePtr.map { normalizedPath(String(cString: $0)) } ?? ""
+            var dyldPath = ""
+            if let rawNamePtr {
+                let rawDyld = String(cString: rawNamePtr)
+                let validated = normalizedSystemPathForAudit(rawDyld)
+                dyldPath = validated.path
+                if validated.hasTraversal {
+                    appendUnique(&anomalies, "检测到动态库路径包含目录穿越伪装")
+                }
+            }
             var dladdrPath = ""
             if let headerPtr {
                 var dlInfo = Dl_info()
                 if dladdr(UnsafeRawPointer(headerPtr), &dlInfo) != 0, let fname = dlInfo.dli_fname {
-                    dladdrPath = normalizedPath(String(cString: fname))
+                    let rawDl = String(cString: fname)
+                    let validated = normalizedSystemPathForAudit(rawDl)
+                    dladdrPath = validated.path
+                    if validated.hasTraversal {
+                        appendUnique(&anomalies, "检测到动态库路径包含目录穿越伪装")
+                    }
                 }
             }
 
@@ -201,19 +241,33 @@ enum RuntimeSecurity {
     private typealias DladdrFn = @convention(c) (UnsafeRawPointer?, UnsafeMutablePointer<Dl_info>?) -> Int32
     private typealias DlsymFn = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?) -> UnsafeMutableRawPointer?
     private typealias GetenvFn = @convention(c) (UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+    private typealias AccessFn = @convention(c) (UnsafePointer<CChar>?, Int32) -> Int32
     private typealias SysctlFn = @convention(c) (
         UnsafeMutablePointer<Int32>?, UInt32, UnsafeMutableRawPointer?,
         UnsafeMutablePointer<Int>?, UnsafeMutableRawPointer?, Int
+    ) -> Int32
+    private typealias SysctlByNameFn = @convention(c) (
+        UnsafePointer<CChar>?, UnsafeMutableRawPointer?, UnsafeMutablePointer<Int>?,
+        UnsafeMutableRawPointer?, Int
     ) -> Int32
     private typealias PBKDFFn = @convention(c) (
         CCPBKDFAlgorithm, UnsafePointer<CChar>?, Int, UnsafePointer<UInt8>?, Int,
         CCPseudoRandomAlgorithm, UInt32, UnsafeMutablePointer<UInt8>?, Int
     ) -> Int32
+    private typealias CCCryptFn = @convention(c) (
+        CCOperation, CCAlgorithm, CCOptions, UnsafeRawPointer?, Int, UnsafeRawPointer?,
+        UnsafeRawPointer?, Int, UnsafeMutableRawPointer?, Int, UnsafeMutablePointer<Int>?
+    ) -> CCCryptorStatus
+    private typealias SecRandomFn = @convention(c) (SecRandomRef?, Int, UnsafeMutableRawPointer) -> Int32
     private typealias SecItemCopyFn = @convention(c) (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
     private typealias SecItemAddFn = @convention(c) (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
+    private typealias SecItemUpdateFn = @convention(c) (CFDictionary, CFDictionary) -> OSStatus
+    private typealias SecItemDeleteFn = @convention(c) (CFDictionary) -> OSStatus
+    private typealias MemsetSFn = @convention(c) (UnsafeMutableRawPointer?, Int, Int32, Int) -> errno_t
 
     /// Function pointers loaded through THIS image's own import table (`__DATA_CONST,__got`) — i.e. exactly
     /// the addresses the app really calls. A fishhook-style injector that rewrites GOT slots changes these values.
+    /// Note: only Clang-imported `@convention(c)` functions are listed here (Swift `@_silgen_name` wrappers emit local thunks).
     private static func boundImportPointers() -> [(String, UnsafeRawPointer)] {
         let imageName: DyldImageNameFn = _dyld_get_image_name
         let imageHeader: DyldImageHeaderFn = _dyld_get_image_header
@@ -221,10 +275,17 @@ enum RuntimeSecurity {
         let dladdrFn: DladdrFn = dladdr
         let dlsymFn: DlsymFn = dlsym
         let getenvFn: GetenvFn = getenv
+        let accessFn: AccessFn = access
         let sysctlFn: SysctlFn = sysctl
+        let sysctlByNameFn: SysctlByNameFn = sysctlbyname
         let pbkdfFn: PBKDFFn = CCKeyDerivationPBKDF
+        let ccCryptFn: CCCryptFn = CCCrypt
+        let secRandomFn: SecRandomFn = SecRandomCopyBytes
         let secCopyFn: SecItemCopyFn = SecItemCopyMatching
         let secAddFn: SecItemAddFn = SecItemAdd
+        let secUpdateFn: SecItemUpdateFn = SecItemUpdate
+        let secDeleteFn: SecItemDeleteFn = SecItemDelete
+        let memsetSFn: MemsetSFn = memset_s
         return [
             ("_dyld_get_image_name", unsafeBitCast(imageName, to: UnsafeRawPointer.self)),
             ("_dyld_get_image_header", unsafeBitCast(imageHeader, to: UnsafeRawPointer.self)),
@@ -232,45 +293,148 @@ enum RuntimeSecurity {
             ("dladdr", unsafeBitCast(dladdrFn, to: UnsafeRawPointer.self)),
             ("dlsym", unsafeBitCast(dlsymFn, to: UnsafeRawPointer.self)),
             ("getenv", unsafeBitCast(getenvFn, to: UnsafeRawPointer.self)),
+            ("access", unsafeBitCast(accessFn, to: UnsafeRawPointer.self)),
             ("sysctl", unsafeBitCast(sysctlFn, to: UnsafeRawPointer.self)),
+            ("sysctlbyname", unsafeBitCast(sysctlByNameFn, to: UnsafeRawPointer.self)),
             ("CCKeyDerivationPBKDF", unsafeBitCast(pbkdfFn, to: UnsafeRawPointer.self)),
+            ("CCCrypt", unsafeBitCast(ccCryptFn, to: UnsafeRawPointer.self)),
+            ("SecRandomCopyBytes", unsafeBitCast(secRandomFn, to: UnsafeRawPointer.self)),
             ("SecItemCopyMatching", unsafeBitCast(secCopyFn, to: UnsafeRawPointer.self)),
-            ("SecItemAdd", unsafeBitCast(secAddFn, to: UnsafeRawPointer.self))
+            ("SecItemAdd", unsafeBitCast(secAddFn, to: UnsafeRawPointer.self)),
+            ("SecItemUpdate", unsafeBitCast(secUpdateFn, to: UnsafeRawPointer.self)),
+            ("SecItemDelete", unsafeBitCast(secDeleteFn, to: UnsafeRawPointer.self)),
+            ("memset_s", unsafeBitCast(memsetSFn, to: UnsafeRawPointer.self))
         ]
     }
 
-    private typealias SharedCacheRangeFn = @convention(c) (UnsafeMutablePointer<Int>?) -> UnsafeRawPointer?
-
     /// Every genuine Apple system function (libsystem, libdyld, Security, CommonCrypto…) lives inside the dyld
     /// shared cache. Hook code from an injected dylib or anonymous executable memory never does. So each pointer
-    /// in our own import table must fall inside the shared-cache address range.
+    /// in our own import table must fall inside the verified shared-cache address range.
     private static func verifyBoundImportPointers(anomalies: inout [String]) {
         guard let cacheRange = sharedCacheAddressRange(anomalies: &anomalies) else { return }
         for (name, pointer) in boundImportPointers() where !cacheRange.contains(UInt(bitPattern: pointer)) {
+            #if targetEnvironment(simulator)
+            // On iOS Simulator, syscall shims (`access`, `ptrace`) reside in host macOS `libsystem_kernel.dylib`
+            // mapped from the host macOS shared cache rather than the simulator's `dyld_sim` shared cache.
+            var simInfo = Dl_info()
+            if dladdr(pointer, &simInfo) != 0, let rawFname = simInfo.dli_fname {
+                let owner = normalizedPath(String(cString: rawFname))
+                if owner == "/usr/lib/system/libsystem_kernel.dylib"
+                    || owner.hasPrefix("/usr/lib/system/libsystem_sim_") {
+                    continue
+                }
+            }
+            #endif
             appendUnique(&anomalies, "检测到关键函数导入表被运行时重绑定（\(name)）")
         }
     }
 
-    /// Returns the dyld shared-cache range, or `nil` when unavailable (fail-quiet, no false positives).
-    /// A forged "cover everything" range is rejected because our own executable is never part of the cache.
-    private static func sharedCacheAddressRange(anomalies: inout [String]) -> Range<UInt>? {
-        guard let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2),
-              let symbol = dlsym(rtldDefault, "_dyld_get_shared_cache_range") else {
-            return nil
+    /// Validates the structural integrity of a Darwin `dyld_cache_header` (`dyld_v1`) in memory.
+    static func isValidSharedCacheHeader(start: UnsafeRawPointer, length: Int) -> Bool {
+        let minimumCacheBytes = 16 * 1024 * 1024
+        guard length >= minimumCacheBytes, length < (1 << 36) else { return false }
+        let lower = UInt(bitPattern: start)
+        guard (lower & 0xFFF) == 0 else { return false }
+
+        // 1. Magic must start with 8-byte "dyld_v1 " and terminate with '\0' at byte 15.
+        let expectedMagicPrefix: [UInt8] = [0x64, 0x79, 0x6C, 0x64, 0x5F, 0x76, 0x31, 0x20]
+        for i in 0..<expectedMagicPrefix.count {
+            if start.load(fromByteOffset: i, as: UInt8.self) != expectedMagicPrefix[i] {
+                return false
+            }
         }
-        let rangeFn = unsafeBitCast(symbol, to: SharedCacheRangeFn.self)
+        guard start.load(fromByteOffset: 15, as: UInt8.self) == 0 else { return false }
+
+        // 2. Validate mapping table offset & count (`mappingOffset` at +16, `mappingCount` at +20).
+        let mappingOffset = start.load(fromByteOffset: 16, as: UInt32.self)
+        let mappingCount = start.load(fromByteOffset: 20, as: UInt32.self)
+        guard mappingOffset >= 0x40,
+              mappingOffset <= 0x4000,
+              mappingOffset % 4 == 0,
+              mappingCount >= 1,
+              mappingCount <= 64,
+              Int(mappingOffset) + 32 <= length else {
+            return false
+        }
+
+        // 3. Validate mapping[0] (`dyld_cache_mapping_info` = 32 bytes): fileOffset == 0 and read+execute non-writable!
+        let m0Base = Int(mappingOffset)
+        let m0Size = start.load(fromByteOffset: m0Base + 8, as: UInt64.self)
+        let m0FileOffset = start.load(fromByteOffset: m0Base + 16, as: UInt64.self)
+        let m0MaxProt = start.load(fromByteOffset: m0Base + 24, as: UInt32.self)
+        let m0InitProt = start.load(fromByteOffset: m0Base + 28, as: UInt32.self)
+        let rxNonWritable: UInt32 = 0x05 // VM_PROT_READ (1) | VM_PROT_EXECUTE (4), no VM_PROT_WRITE (2)
+        guard m0Size >= 0x4000,
+              m0Size <= UInt64(length),
+              m0FileOffset == 0,
+              m0MaxProt == rxNonWritable,
+              m0InitProt == rxNonWritable else {
+            return false
+        }
+
+        // 4. Non-zero 16-byte cache UUID at +0x58 when header includes the UUID field (`mappingOffset >= 0x68`).
+        if mappingOffset >= 0x68 {
+            var anyNonZeroUUIDByte = false
+            for off in 0x58..<0x68 where start.load(fromByteOffset: off, as: UInt8.self) != 0 {
+                anyNonZeroUUIDByte = true
+                break
+            }
+            guard anyNonZeroUUIDByte else { return false }
+        }
+
+        return true
+    }
+
+    /// Returns the verified dyld shared-cache range, failing closed if missing, unaligned, or forged.
+    private static func sharedCacheAddressRange(anomalies: inout [String]) -> Range<UInt>? {
         var length = 0
-        guard let start = rangeFn(&length), length > 0, length < (1 << 36) else {
+        guard let start = cardse_dyld_get_shared_cache_range(&length),
+              length > 0,
+              length < (1 << 36) else {
+            #if !targetEnvironment(simulator)
+            appendUnique(&anomalies, "检测到 dyld 共享缓存范围缺失或异常（疑似被 Hook 屏蔽）")
+            #endif
             return nil
         }
         let lower = UInt(bitPattern: start)
         let (upper, overflow) = lower.addingReportingOverflow(UInt(length))
-        guard !overflow else { return nil }
+        guard !overflow else {
+            appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
+            return nil
+        }
+
+        // The genuine dyld_cache_header precedes all Mach-O images in the cache (`dladdr(start) == 0`),
+        // whereas a forged header buffer embedded inside an injected dylib resolves to that dylib's image!
+        var startInfo = Dl_info()
+        if !isValidSharedCacheHeader(start: start, length: length) || dladdr(start, &startInfo) != 0 {
+            appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
+            return nil
+        }
+
         let range = lower..<upper
         let ownImage = UInt(bitPattern: UnsafeRawPointer(#dsohandle))
         if range.contains(ownImage) {
             appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
             return nil
+        }
+
+        // Cross-check loaded images: no untrusted or main-executable Mach-O image may ever reside inside cacheRange.
+        let totalImages = _dyld_image_count()
+        for idx in 0..<totalImages {
+            guard let hdr = _dyld_get_image_header(idx) else { continue }
+            let hdrAddr = UInt(bitPattern: hdr)
+            guard range.contains(hdrAddr) else { continue }
+            if hdr.pointee.filetype == UInt32(MH_EXECUTE) {
+                appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
+                return nil
+            }
+            if let rawName = _dyld_get_image_name(idx) {
+                let checked = normalizedSystemPathForAudit(String(cString: rawName))
+                if checked.hasTraversal || !isTrustedSystemImagePath(checked.path) {
+                    appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
+                    return nil
+                }
+            }
         }
         return range
     }
@@ -333,7 +497,8 @@ enum RuntimeSecurity {
 
     private static func verifyCriticalSymbolOrigins(anomalies: inout [String]) {
         guard let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2) else { return }
-        for symbol in criticalSystemSymbols {
+        for entry in criticalSystemSymbols {
+            let symbol = entry.name
             guard let symAddr = dlsym(rtldDefault, symbol) else {
                 appendUnique(&anomalies, "关键系统安全符号缺失（\(symbol)）")
                 continue
@@ -343,10 +508,12 @@ enum RuntimeSecurity {
                 appendUnique(&anomalies, "关键系统安全符号来源不可解析（\(symbol)）")
                 continue
             }
-            let ownerPath = normalizedPath(String(cString: rawFname))
-            let isSystemUmbrella = ownerPath.hasPrefix("/usr/lib/system/")
-                || ownerPath == "/usr/lib/libSystem.B.dylib"
-            if !isSystemUmbrella || !isTrustedSystemImagePath(ownerPath) {
+            let validated = normalizedSystemPathForAudit(String(cString: rawFname))
+            let ownerPath = validated.path
+            let matchesAllowedUmbrella = entry.allowedPrefixes.contains { prefix in
+                ownerPath == prefix || (prefix.hasSuffix("/") && ownerPath.hasPrefix(prefix))
+            }
+            if validated.hasTraversal || !matchesAllowedUmbrella || !isTrustedSystemImagePath(ownerPath) {
                 appendUnique(&anomalies, "检测到关键系统符号被重定向或 Hook（\(symbol)）")
             }
         }
@@ -366,8 +533,19 @@ enum RuntimeSecurity {
         }
     }
 
-    private static func normalizedPath(_ path: String) -> String {
-        var result = path
+    /// Canonicalizes a Mach-O path while explicitly detecting relative traversal segments (`..` / `.` / `\`)
+    /// so a crafted path such as `/usr/lib/../../var/tmp/evil.dylib` can never pass prefix allowlists.
+    static func normalizedSystemPathForAudit(_ rawPath: String) -> (path: String, hasTraversal: Bool) {
+        let hasSuspiciousSegments = rawPath.contains("/../")
+            || rawPath.hasSuffix("/..")
+            || rawPath.hasPrefix("../")
+            || rawPath == ".."
+            || rawPath.contains("/./")
+            || rawPath.hasSuffix("/.")
+            || rawPath.contains("\\")
+            || rawPath.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F })
+
+        var result = rawPath
         #if targetEnvironment(simulator)
         if let simRootPtr = getenv("SIMULATOR_ROOT") {
             let simRoot = String(cString: simRootPtr)
@@ -382,13 +560,24 @@ enum RuntimeSecurity {
             }
         }
         #endif
-        if result.hasPrefix("/private/var/") || result.hasPrefix("/private/etc/") || result.hasPrefix("/private/tmp/") {
-            return String(result.dropFirst("/private".count))
+        if !result.isEmpty {
+            result = (result as NSString).standardizingPath
         }
-        return result
+        if result.hasPrefix("/private/var/") || result.hasPrefix("/private/etc/") || result.hasPrefix("/private/tmp/") {
+            result = String(result.dropFirst("/private".count))
+        }
+        return (result, hasSuspiciousSegments)
     }
 
-    private static func isTrustedSystemImagePath(_ path: String) -> Bool {
+    private static func normalizedPath(_ path: String) -> String {
+        normalizedSystemPathForAudit(path).path
+    }
+
+    static func isTrustedSystemImagePath(_ path: String) -> Bool {
+        guard !path.isEmpty else { return false }
+        let checked = normalizedSystemPathForAudit(path)
+        if checked.hasTraversal { return false }
+        let canonical = checked.path
         let trustedPrefixes = [
             "/System/Library/",
             "/usr/lib/",
@@ -399,8 +588,8 @@ enum RuntimeSecurity {
             "/System/DriverKit/",
             "/Library/Apple/"
         ]
-        if trustedPrefixes.contains(where: { path.hasPrefix($0) }) {
-            let lower = path.lowercased()
+        if trustedPrefixes.contains(where: { canonical.hasPrefix($0) }) {
+            let lower = canonical.lowercased()
             if lower.contains("substrate")
                 || lower.contains("ellekit")
                 || lower.contains("tweakinject")
@@ -412,12 +601,12 @@ enum RuntimeSecurity {
             return true
         }
         #if targetEnvironment(simulator)
-        if path.contains(".simruntime/") || path.contains("/CoreSimulator/") {
+        if canonical.contains(".simruntime/") || canonical.contains("/CoreSimulator/") {
             return true
         }
         #endif
         #if DEBUG
-        if path.hasPrefix("/Developer/") || path.contains(".xctest/") || path.contains("Xcode") {
+        if canonical.hasPrefix("/Developer/") || canonical.contains(".xctest/") || canonical.contains("Xcode") {
             return true
         }
         #endif

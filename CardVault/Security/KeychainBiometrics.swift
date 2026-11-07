@@ -67,6 +67,7 @@ enum KeychainBiometrics {
         switch context.biometryType {
         case .faceID: return .faceID
         case .touchID: return .touchID
+        case .opticID: return .opticID
         case .none: return .none
         @unknown default: return .none
         }
@@ -107,18 +108,20 @@ enum KeychainBiometrics {
         }
 
         var keyData = key.withUnsafeBytes { Data($0) }
-        defer { keyData.resetBytes(in: 0..<keyData.count) }
+        defer { SecureZero.wipe(&keyData) }
 
-        let addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrSynchronizable as String: kCFBooleanFalse!,
-            kSecValueData as String: keyData,
-            kSecAttrAccessControl as String: accessControl
-        ]
-
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
+        let status: OSStatus = keyData.withUnsafeBytes { rawBuffer in
+            let nsValue = NSData(bytes: rawBuffer.baseAddress, length: rawBuffer.count)
+            let addQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+                kSecAttrSynchronizable as String: kCFBooleanFalse!,
+                kSecValueData as String: nsValue,
+                kSecAttrAccessControl as String: accessControl
+            ]
+            return SecItemAdd(addQuery as CFDictionary, nil)
+        }
         guard status == errSecSuccess else {
             throw KeychainBiometricError.keychainFailure(status)
         }
@@ -160,11 +163,15 @@ enum KeychainBiometrics {
 
                 switch status {
                 case errSecSuccess:
-                    guard var data = result as? Data, data.count == 32 else {
+                    guard let nsData = result as? NSData, nsData.length == 32 else {
+                        result = nil
                         continue
                     }
-                    defer { data.resetBytes(in: 0..<data.count) }
-                    return SymmetricKey(data: data)
+                    var ownedBytes = [UInt8](repeating: 0, count: 32)
+                    nsData.getBytes(&ownedBytes, length: 32)
+                    result = nil
+                    defer { SecureZero.wipe(&ownedBytes) }
+                    return SymmetricKey(data: ownedBytes)
                 case errSecUserCanceled, errSecAuthFailed:
                     throw KeychainBiometricError.userCancelled
                 case errSecItemNotFound:

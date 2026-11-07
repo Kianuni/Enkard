@@ -36,8 +36,11 @@ final class VaultStore: ObservableObject {
 
     let clipboard = SecureClipboard()
     private var clipboardCancellable: AnyCancellable?
-    private lazy var lockout = LockoutGuard()
+    private let stateBackend: any KeychainStateBackend
+    private lazy var lockout = LockoutGuard(backend: stateBackend)
     private let hardwareKeys: any HardwareKeyProvider
+    private let customVaultFileURL: URL?
+    private var periodicTickCounter: UInt64 = 0
 
     // MARK: - Device-local non-synced preferences (stored in Keychain `WhenUnlockedThisDeviceOnly`, never backed up)
 
@@ -90,8 +93,14 @@ final class VaultStore: ObservableObject {
             && UIApplication.shared.isProtectedDataAvailable
     }
 
-    init(hardwareKeys: any HardwareKeyProvider = DeviceHardwareKeyManager()) {
+    init(
+        hardwareKeys: any HardwareKeyProvider = DeviceHardwareKeyManager(),
+        stateBackend: any KeychainStateBackend = SystemKeychainBackend(),
+        customVaultFileURL: URL? = nil
+    ) {
         self.hardwareKeys = hardwareKeys
+        self.stateBackend = stateBackend
+        self.customVaultFileURL = customVaultFileURL
         self.runtimeIntegrity = .cleanInitial
         self.biometricsEnabled = false
         self.autoLockTimeout = .immediately
@@ -101,6 +110,23 @@ final class VaultStore: ObservableObject {
         self.clipboardCancellable = clipboard.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+    }
+
+    private static func nextSafeGeneration(current: UInt64, recorded: UInt64) throws -> UInt64 {
+        let highWater = max(current, recorded)
+        guard highWater < VaultPlaintextPayload.maximumValidGeneration else {
+            throw VaultCryptoError.corruptedPayload
+        }
+        return highWater + 1
+    }
+
+    private func resignActiveInputFocus() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
     }
 
     /// Synchronous 0ms anti-debug check at entry of every key derivation, unlock, rotation, or backup operation.
@@ -125,7 +151,7 @@ final class VaultStore: ObservableObject {
         hasBootstrapped = true
 
         isLoadingPreferences = true
-        let prefs = VaultPreferencesStore.load()
+        let prefs = VaultPreferencesStore.load(using: stateBackend)
         biometricsEnabled = prefs.biometricsEnabled
         autoLockTimeout = AutoLockTimeout(rawValue: prefs.autoLockTimeoutRaw) ?? .immediately
         idleLockTimeout = IdleLockTimeout(rawValue: prefs.idleLockTimeoutRaw) ?? .minutes3
@@ -150,10 +176,17 @@ final class VaultStore: ObservableObject {
             clipboardClearDurationRaw: clipboardClearDuration.rawValue,
             wipeAfterFailedAttempts: wipeAfterFailedAttempts
         )
-        VaultPreferencesStore.save(prefs)
+        VaultPreferencesStore.save(prefs, using: stateBackend)
     }
 
     var storageDirectoryURL: URL {
+        if let customVaultFileURL {
+            let folder = customVaultFileURL.deletingLastPathComponent()
+            if !FileManager.default.fileExists(atPath: folder.path) {
+                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            }
+            return folder
+        }
         let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let folder = supportDir.appendingPathComponent("CardSeStorage", isDirectory: true)
         if !FileManager.default.fileExists(atPath: folder.path) {
@@ -168,7 +201,11 @@ final class VaultStore: ObservableObject {
     }
 
     var vaultFileURL: URL {
-        storageDirectoryURL.appendingPathComponent("vault.cardse", isDirectory: false)
+        if let customVaultFileURL {
+            _ = storageDirectoryURL
+            return customVaultFileURL
+        }
+        return storageDirectoryURL.appendingPathComponent("vault.cardse", isDirectory: false)
     }
 
     private func migrateLegacyStorageDirectoryIfNeeded() {
@@ -241,16 +278,18 @@ final class VaultStore: ObservableObject {
 
         guard fileExists else {
             // Distinguish genuine first install from unexpected disappearance of an existing vault!
-            let identity = VaultIdentityStore.readResult()
-            if identity.isUnavailable {
-                // Device is still locked and Keychain cannot be queried yet — stay safely on `.locked`!
+            let identityState = VaultIdentityStore.readState(using: stateBackend)
+            switch identityState {
+            case .unavailable, .corrupted:
+                // Device is still locked or Keychain state is unreadable — stay safely on `.locked`!
                 phase = .locked
                 needsReloadWhenProtectedDataAvailable = true
                 wipeSensitiveMemory()
                 return
-            }
-            if let existingRecord = identity.record {
+            case .found(let existingRecord):
                 securityNotice = "安全警告：系统钥匙串中存在第 \(existingRecord.generation) 版卡包记录，但本地加密文件已不存在。若非您本人卸载重装，请注意设备安全，并仅从可信备份恢复。"
+            case .notFound:
+                break
             }
             phase = .onboarding
             currentEnvelope = nil
@@ -340,7 +379,8 @@ final class VaultStore: ObservableObject {
             }.value
 
             guard VaultIdentityStore.write(
-                VaultIdentityRecord(vaultID: vaultID, generation: 1, envelopeVersion: VaultEnvelope.currentVersion)
+                VaultIdentityRecord(vaultID: vaultID, generation: 1, envelopeVersion: VaultEnvelope.currentVersion),
+                using: stateBackend
             ) else {
                 throw VaultCryptoError.hardwareKeyUnavailable("无法向本机钥匙串写入防回滚身份标识，请确认设备处于解锁状态")
             }
@@ -384,6 +424,23 @@ final class VaultStore: ObservableObject {
         if rejectIfDebuggerAttached() { return false }
         guard !isBusy else { return false }
 
+        // Pre-validate empty / oversized inputs BEFORE incrementing the persistent failure counter so
+        // accidental blank submits or paste-bombs never advance toward the 15-attempt self-destruct threshold.
+        guard password.utf8.count <= VaultCrypto.maximumPasswordUTF8Bytes * 4 else {
+            errorMessage = VaultCryptoError.passwordTooLong(maximum: VaultCrypto.maximumPasswordLength).localizedDescription
+            return false
+        }
+        let normalizedInput = VaultCrypto.normalizePassword(password)
+        guard !normalizedInput.isEmpty else {
+            errorMessage = VaultCryptoError.emptyPassword.localizedDescription
+            return false
+        }
+        guard normalizedInput.count <= VaultCrypto.maximumPasswordLength,
+              normalizedInput.utf8.count <= VaultCrypto.maximumPasswordUTF8Bytes else {
+            errorMessage = VaultCryptoError.passwordTooLong(maximum: VaultCrypto.maximumPasswordLength).localizedDescription
+            return false
+        }
+
         let remaining = lockout.remainingSeconds()
         if remaining > 0 {
             errorMessage = Self.lockoutMessage(remaining)
@@ -405,8 +462,9 @@ final class VaultStore: ObservableObject {
         defer { isBusy = false }
 
         // Fail-Closed on Keychain identity availability & prevent v2 -> v1 downgrade!
-        let identityState = VaultIdentityStore.readState()
+        let identityState = VaultIdentityStore.readState(using: stateBackend)
         let allowLegacyV1: Bool
+        var recordedGeneration: UInt64 = 0
         switch identityState {
         case .unavailable:
             errorMessage = "系统钥匙串防回滚状态暂不可读，请先解锁手机屏幕后再试"
@@ -415,11 +473,13 @@ final class VaultStore: ObservableObject {
             allowLegacyV1 = false
         case .found(let existingIdentity):
             allowLegacyV1 = existingIdentity.envelopeVersion < VaultEnvelope.currentVersion
+            recordedGeneration = existingIdentity.generation
         case .notFound:
             allowLegacyV1 = true
         }
 
-        let priorFailures = lockout.failures
+        let priorRecord = lockout.record
+        let priorFailures = priorRecord.failures
         let startedEpoch = sessionEpoch
 
         // Fail-Closed: persist the incremented attempt counter to Keychain BEFORE running PBKDF2!
@@ -449,10 +509,13 @@ final class VaultStore: ObservableObject {
             // Upgrade legacy v1 or sub-threshold KDF vaults to v2 + Secure Enclave + fresh DEK!
             if unlocked.needsUpgradeToV2 {
                 let upgradedVaultID = envelope.vaultID ?? UUID()
-                // Always advance past the recorded watermark so the weaker pre-upgrade file can never be replayed.
-                let nextGen = max(unlocked.payload.generation, VaultIdentityStore.read()?.generation ?? 0) + 1
                 let shouldRotateHW = envelope.version < VaultEnvelope.currentVersion
                 do {
+                    // Always advance past the recorded watermark so the weaker pre-upgrade file can never be replayed.
+                    let nextGen = try Self.nextSafeGeneration(
+                        current: unlocked.payload.generation,
+                        recorded: recordedGeneration
+                    )
                     let upgraded = try await Task.detached(priority: .userInitiated) {
                         try VaultCrypto.createNewLocalVault(
                             masterPassword: password,
@@ -498,9 +561,18 @@ final class VaultStore: ObservableObject {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             return true
         } catch {
-            let failures = lockout.failures
             UINotificationFeedbackGenerator().notificationOccurred(.error)
 
+            let isGenuineAuthMismatch = (error as? VaultCryptoError) == .authenticationFailed
+            if !isGenuineAuthMismatch {
+                // Environmental / hardware / format fault (e.g. transient SEP unavailability while screen locked):
+                // roll back the pre-KDF increment and NEVER trigger permanent 15-attempt crypto-shredding!
+                lockout.rollbackNonAuthenticationFault(restoring: priorRecord)
+                errorMessage = error.localizedDescription
+                return false
+            }
+
+            let failures = lockout.failures
             if failures >= LockoutPolicy.biometricSuspensionThreshold {
                 // Suspend biometric shortcut until a valid master password is entered.
                 KeychainBiometrics.deleteBiometricDEK()
@@ -544,7 +616,7 @@ final class VaultStore: ObservableObject {
 
         // Fail-Closed anti-downgrade & anti-rollback verification on biometric quick unlock!
         let recordedIdentity: VaultIdentityRecord
-        switch VaultIdentityStore.readState() {
+        switch VaultIdentityStore.readState(using: stateBackend) {
         case .unavailable, .corrupted:
             errorMessage = "系统钥匙串防回滚状态异常，已暂停快捷解锁，请输入主密码验证"
             return false
@@ -614,6 +686,7 @@ final class VaultStore: ObservableObject {
     func enterEmergencyLockdown() {
         bumpSessionEpoch()
         cancelBackgroundLock()
+        resignActiveInputFocus()
         clipboard.clearIfOwned()
         KeychainBiometrics.deleteBiometricDEK()
         lockout.setLockdownActive(true)
@@ -626,6 +699,7 @@ final class VaultStore: ObservableObject {
     func lock(reason: LockReason = .manual) {
         bumpSessionEpoch()
         cancelBackgroundLock()
+        resignActiveInputFocus()
         if reason != .background {
             // Unconditionally clear clipboard on manual, idle, deviceLocked, emergencyLockdown, or anomaly!
             clipboard.clearIfOwned()
@@ -670,7 +744,7 @@ final class VaultStore: ObservableObject {
 
         // Anti-replacement & anti-rollback verification against Keychain VaultIdentityStore.
         // Never allow `currentGeneration` or Keychain watermark to regress below recorded high-water mark!
-        switch VaultIdentityStore.readState() {
+        switch VaultIdentityStore.readState(using: stateBackend) {
         case .found(let recorded):
             currentGeneration = max(payload.generation, recorded.generation)
             if let expectedID = recorded.vaultID, let actualID = envelope.vaultID, expectedID != actualID {
@@ -683,7 +757,8 @@ final class VaultStore: ObservableObject {
                         vaultID: envelope.vaultID ?? recorded.vaultID,
                         generation: payload.generation,
                         envelopeVersion: envelope.version
-                    )
+                    ),
+                    using: stateBackend
                 )
             }
         case .notFound:
@@ -692,7 +767,8 @@ final class VaultStore: ObservableObject {
                     vaultID: envelope.vaultID,
                     generation: payload.generation,
                     envelopeVersion: envelope.version
-                )
+                ),
+                using: stateBackend
             )
         case .corrupted:
             notices.append("严重警告：系统钥匙串中的防回滚身份记录格式异常，疑似曾遭篡改！")
@@ -753,7 +829,13 @@ final class VaultStore: ObservableObject {
             throw VaultCryptoError.authenticationFailed
         }
 
-        let nextGeneration = max(currentGeneration, VaultIdentityStore.read()?.generation ?? 0) + 1
+        let recordedGen: UInt64
+        if case .found(let rec) = VaultIdentityStore.readState(using: stateBackend) {
+            recordedGen = rec.generation
+        } else {
+            recordedGen = 0
+        }
+        let nextGeneration = try Self.nextSafeGeneration(current: currentGeneration, recorded: recordedGen)
         let newEnvelope = try VaultCrypto.resealLocalPayload(
             existingEnvelope: envelope,
             key: key,
@@ -769,7 +851,8 @@ final class VaultStore: ObservableObject {
                 vaultID: newEnvelope.vaultID,
                 generation: nextGeneration,
                 envelopeVersion: newEnvelope.version
-            )
+            ),
+            using: stateBackend
         ) {
             securityNotice = "安全提醒：卡片已保存，但防回滚版本水位写入系统钥匙串失败，将在下次保存时自动重试。"
         }
@@ -817,6 +900,21 @@ final class VaultStore: ObservableObject {
     /// (password rotation & Secure-Enclave-stripping offline backup export).
     /// Prevents unthrottled password guessing or Face ID opportunistic vault export.
     private func verifyMasterPasswordReauth(_ candidatePassword: String, against envelope: VaultEnvelope) async -> Bool {
+        guard candidatePassword.utf8.count <= VaultCrypto.maximumPasswordUTF8Bytes * 4 else {
+            errorMessage = VaultCryptoError.passwordTooLong(maximum: VaultCrypto.maximumPasswordLength).localizedDescription
+            return false
+        }
+        let normalizedInput = VaultCrypto.normalizePassword(candidatePassword)
+        guard !normalizedInput.isEmpty else {
+            errorMessage = VaultCryptoError.emptyPassword.localizedDescription
+            return false
+        }
+        guard normalizedInput.count <= VaultCrypto.maximumPasswordLength,
+              normalizedInput.utf8.count <= VaultCrypto.maximumPasswordUTF8Bytes else {
+            errorMessage = VaultCryptoError.passwordTooLong(maximum: VaultCrypto.maximumPasswordLength).localizedDescription
+            return false
+        }
+
         let remaining = lockout.remainingSeconds()
         if remaining > 0 {
             let msg = Self.lockoutMessage(remaining)
@@ -825,48 +923,56 @@ final class VaultStore: ObservableObject {
             return false
         }
 
+        let priorRecord = lockout.record
         guard lockout.beginAttempt() else {
             errorMessage = "安全计数器无法写入系统钥匙串，已中止敏感操作验证"
             return false
         }
 
         let keys = hardwareKeys
-        let matched = await Task.detached(priority: .userInitiated) {
-            VaultCrypto.verifyLocalPassword(candidatePassword, against: envelope, hardwareKeys: keys)
-        }.value
-
-        if matched {
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try VaultCrypto.verifyLocalPasswordThrowing(candidatePassword, against: envelope, hardwareKeys: keys)
+            }.value
             lockout.reset()
             return true
-        }
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
 
-        let failures = lockout.failures
-        UINotificationFeedbackGenerator().notificationOccurred(.error)
+            let isGenuineAuthMismatch = (error as? VaultCryptoError) == .authenticationFailed
+            if !isGenuineAuthMismatch {
+                // Transient Secure Enclave / Keychain unavailability must NEVER advance toward permanent vault wipe!
+                lockout.rollbackNonAuthenticationFault(restoring: priorRecord)
+                errorMessage = error.localizedDescription
+                return false
+            }
 
-        if failures >= LockoutPolicy.biometricSuspensionThreshold {
-            KeychainBiometrics.deleteBiometricDEK()
-        }
+            let failures = lockout.failures
+            if failures >= LockoutPolicy.biometricSuspensionThreshold {
+                KeychainBiometrics.deleteBiometricDEK()
+            }
 
-        if wipeAfterFailedAttempts && failures >= LockoutPolicy.wipeThreshold {
-            destroyVaultCompletely()
-            errorMessage = "主密码已连续输错 \(failures) 次，已按设置触发硬件密钥销毁并擦除本机卡包。"
+            if wipeAfterFailedAttempts && failures >= LockoutPolicy.wipeThreshold {
+                destroyVaultCompletely()
+                errorMessage = "主密码已连续输错 \(failures) 次，已按设置触发硬件密钥销毁并擦除本机卡包。"
+                return false
+            }
+
+            let wait = lockout.remainingSeconds()
+            var message = VaultCryptoError.authenticationFailed.localizedDescription
+            if wait > 0 {
+                message += "\n" + Self.lockoutMessage(wait)
+            } else if failures >= 3 {
+                message += "\n已连续输错 \(failures) 次，第 \(LockoutPolicy.biometricSuspensionThreshold) 次起将强制锁定会话并递增冷却时间"
+            }
+
+            // Kick opportunistic attacker out of unlocked session once brute-force threshold engages!
+            if failures >= LockoutPolicy.biometricSuspensionThreshold || wait > 0 {
+                lock(reason: .securityAnomaly)
+            }
+            errorMessage = message
             return false
         }
-
-        let wait = lockout.remainingSeconds()
-        var message = VaultCryptoError.authenticationFailed.localizedDescription
-        if wait > 0 {
-            message += "\n" + Self.lockoutMessage(wait)
-        } else if failures >= 3 {
-            message += "\n已连续输错 \(failures) 次，第 \(LockoutPolicy.biometricSuspensionThreshold) 次起将强制锁定会话并递增冷却时间"
-        }
-
-        // Kick opportunistic attacker out of unlocked session once brute-force threshold engages!
-        if failures >= LockoutPolicy.biometricSuspensionThreshold || wait > 0 {
-            lock(reason: .securityAnomaly)
-        }
-        errorMessage = message
-        return false
     }
 
     func changeMasterPassword(currentPassword: String, newPassword: String) async -> Bool {
@@ -892,7 +998,19 @@ final class VaultStore: ObservableObject {
         }
 
         let snapshotCards = cards
-        let nextGeneration = max(currentGeneration, VaultIdentityStore.read()?.generation ?? 0) + 1
+        let recordedGen: UInt64
+        if case .found(let rec) = VaultIdentityStore.readState(using: stateBackend) {
+            recordedGen = rec.generation
+        } else {
+            recordedGen = 0
+        }
+        let nextGeneration: UInt64
+        do {
+            nextGeneration = try Self.nextSafeGeneration(current: currentGeneration, recorded: recordedGen)
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
         let vaultID = envelope.vaultID ?? UUID()
         let keys = hardwareKeys
 
@@ -929,7 +1047,8 @@ final class VaultStore: ObservableObject {
                     vaultID: vaultID,
                     generation: nextGeneration,
                     envelopeVersion: rotated.envelope.version
-                )
+                ),
+                using: stateBackend
             ) {
                 securityNotice = "安全提醒：主密码已更新，但防回滚版本水位写入系统钥匙串失败，将在下次保存时自动重试。"
             }
@@ -1166,12 +1285,14 @@ final class VaultStore: ObservableObject {
     func destroyVaultCompletely() {
         bumpSessionEpoch()
         cancelBackgroundLock()
+        resignActiveInputFocus()
         clipboard.clearIfOwned()
         hardwareKeys.destroyKey() // Hardware-level Crypto-Shredding!
         KeychainBiometrics.deleteBiometricDEK()
-        VaultIdentityStore.clear()
-        VaultPreferencesStore.clear()
+        VaultIdentityStore.clear(using: stateBackend)
+        VaultPreferencesStore.clear(using: stateBackend)
         lockout.reset()
+        KeychainStateAuthenticator.clearKey(using: stateBackend)
 
         let url = vaultFileURL
         if let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int, size > 0 {
@@ -1199,6 +1320,7 @@ final class VaultStore: ObservableObject {
 
     func handleWillResignActive() {
         isAppInactive = true
+        resignActiveInputFocus()
     }
 
     func handleDidEnterBackground() {
@@ -1251,6 +1373,7 @@ final class VaultStore: ObservableObject {
     }
 
     func periodicSecurityTick() {
+        periodicTickCounter &+= 1
         #if !DEBUG
         if RuntimeSecurity.isDebuggerAttached() {
             clipboard.clearIfOwned()
@@ -1260,6 +1383,19 @@ final class VaultStore: ObservableObject {
             return
         }
         #endif
+
+        // Re-audit Mach-O images & GOT bindings every 30s (6 ticks) while foregrounded to catch post-launch `dlopen` hooks.
+        if periodicTickCounter % 6 == 0, !isAppInactive {
+            let latestIntegrity = RuntimeSecurity.auditEnvironment(
+                antiDebugActive: AppDelegate.antiDebugEnabledAtLaunch
+            )
+            let newlyCompromised = latestIntegrity.isCompromised && !runtimeIntegrity.isCompromised
+            runtimeIntegrity = latestIntegrity
+            if newlyCompromised {
+                KeychainBiometrics.deleteBiometricDEK()
+                securityNotice = "运行时完整性告警：\(latestIntegrity.summaryText)。已立即撤销生物识别快捷解锁！"
+            }
+        }
 
         guard phase == .unlocked, !isBusy, !isAppInactive else { return }
         if Date().timeIntervalSince(lastActivityAt) >= TimeInterval(idleLockTimeout.rawValue) {

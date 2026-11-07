@@ -101,6 +101,11 @@ struct CardEditorView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         TextField("发卡银行（如：招商银行）", text: $bankName)
                             .lockdownTextInput()
+                            .onValueChange(of: bankName) { val in
+                                if val.count > BankCard.maxBankNameLength {
+                                    bankName = String(val.prefix(BankCard.maxBankNameLength))
+                                }
+                            }
 
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 6) {
@@ -125,6 +130,11 @@ struct CardEditorView: View {
 
                     TextField("卡片别名（选填，如：全币种海淘卡）", text: $nickname)
                         .lockdownTextInput()
+                        .onValueChange(of: nickname) { val in
+                            if val.count > BankCard.maxNicknameLength {
+                                nickname = String(val.prefix(BankCard.maxNicknameLength))
+                            }
+                        }
 
                     // Card Number: SecureField by default so screenshots cannot capture full PAN in the form!
                     VStack(alignment: .leading, spacing: 6) {
@@ -134,7 +144,7 @@ struct CardEditorView: View {
                             .focused($cardNumberFocused)
                             .font(.system(.body, design: .monospaced))
                             .onValueChange(of: cardNumberDigits) { newValue in
-                                let filtered = String(newValue.filter(\.isWholeNumber).prefix(19))
+                                let filtered = String(BankCard.asciiDigitsOnly(newValue).prefix(BankCard.maxCardNumberDigits))
                                 if filtered != newValue {
                                     cardNumberDigits = filtered
                                 }
@@ -200,6 +210,11 @@ struct CardEditorView: View {
 
                     TextField("持卡人英文/拼音（选填，如 SAN ZHANG）", text: $cardholderName)
                         .lockdownTextInput(autocapitalization: .characters)
+                        .onValueChange(of: cardholderName) { val in
+                            if val.count > BankCard.maxCardholderNameLength {
+                                cardholderName = String(val.prefix(BankCard.maxCardholderNameLength))
+                            }
+                        }
                 }
 
                 // Classification & Card Theme
@@ -262,9 +277,19 @@ struct CardEditorView: View {
                     DisclosureGroup("海淘账单地址、账单日与备注（选填）", isExpanded: $showExtendedFields) {
                         TextField("海淘账单地址 (Billing Address)", text: $billingAddress)
                             .lockdownTextInput()
+                            .onValueChange(of: billingAddress) { val in
+                                if val.count > BankCard.maxBillingAddressLength {
+                                    billingAddress = String(val.prefix(BankCard.maxBillingAddressLength))
+                                }
+                            }
                         TextField("账单邮编 (ZIP / Postal Code)", text: $postalCode)
                             .keyboardType(.asciiCapable)
                             .lockdownTextInput()
+                            .onValueChange(of: postalCode) { val in
+                                if val.count > BankCard.maxPostalCodeLength {
+                                    postalCode = String(val.prefix(BankCard.maxPostalCodeLength))
+                                }
+                            }
 
                         if !pin.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
@@ -286,7 +311,7 @@ struct CardEditorView: View {
                             .keyboardType(.numberPad)
                             .lockdownTextInput()
                             .onValueChange(of: phoneLast4) { val in
-                                phoneLast4 = String(val.filter(\.isWholeNumber).prefix(4))
+                                phoneLast4 = String(BankCard.asciiDigitsOnly(val).prefix(BankCard.maxPhoneLast4Digits))
                             }
 
                         HStack {
@@ -297,6 +322,9 @@ struct CardEditorView: View {
                                 .lockdownTextInput()
                                 .multilineTextAlignment(.trailing)
                                 .frame(width: 70)
+                                .onValueChange(of: statementDayString) { val in
+                                    statementDayString = String(BankCard.asciiDigitsOnly(val).prefix(2))
+                                }
                         }
 
                         HStack {
@@ -307,12 +335,25 @@ struct CardEditorView: View {
                                 .lockdownTextInput()
                                 .multilineTextAlignment(.trailing)
                                 .frame(width: 70)
+                                .onValueChange(of: dueDayString) { val in
+                                    dueDayString = String(BankCard.asciiDigitsOnly(val).prefix(2))
+                                }
                         }
 
                         TextField("授信额度 / 币种（如 50,000 CNY）", text: $creditLimit)
                             .lockdownTextInput()
+                            .onValueChange(of: creditLimit) { val in
+                                if val.count > BankCard.maxCreditLimitLength {
+                                    creditLimit = String(val.prefix(BankCard.maxCreditLimitLength))
+                                }
+                            }
                         SecureField("安全备注（保存后默认打码）", text: $notes)
                             .lockdownTextInput()
+                            .onValueChange(of: notes) { val in
+                                if val.count > BankCard.maxNotesLength {
+                                    notes = String(val.prefix(BankCard.maxNotesLength))
+                                }
+                            }
                     }
                 }
 
@@ -351,13 +392,14 @@ struct CardEditorView: View {
             }
             .onValueChange(of: store.isScreenCaptured) { captured in
                 if captured {
-                    previewRevealTask?.cancel()
-                    revealInSecurePreview = false
+                    scrubState()
+                    dismiss()
                 }
             }
             .onValueChange(of: store.phase) { newPhase in
                 if newPhase != .unlocked {
                     scrubState()
+                    dismiss()
                 }
             }
         }

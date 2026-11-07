@@ -14,6 +14,7 @@ enum CardFilterCategory: String, CaseIterable, Identifiable {
 struct CardListView: View {
     @ObservedObject var store: VaultStore
 
+    @State private var navigationPath = NavigationPath()
     @State private var searchText = ""
     @State private var selectedFilter: CardFilterCategory = .all
     @State private var showingAddCard = false
@@ -51,7 +52,7 @@ struct CardListView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             VStack(spacing: 0) {
                 if store.isScreenCaptured {
                     ScreenCaptureWarningBanner()
@@ -158,8 +159,14 @@ struct CardListView: View {
             .sheet(isPresented: $showingSettings) {
                 SecuritySettingsView(store: store)
             }
+            .onValueChange(of: searchText) { newQuery in
+                if newQuery.count > 128 {
+                    searchText = String(newQuery.prefix(128))
+                }
+            }
             .onValueChange(of: store.phase) { newPhase in
                 if newPhase != .unlocked {
+                    navigationPath = NavigationPath()
                     searchText = ""
                     showingAddCard = false
                     showingSettings = false

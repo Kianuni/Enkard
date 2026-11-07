@@ -104,6 +104,11 @@ struct LockScreenView: View {
                         .focused($passwordFocused)
                         .submitLabel(.go)
                         .foregroundStyle(.white)
+                        .onValueChange(of: password) { val in
+                            if val.count > VaultCrypto.maximumPasswordLength {
+                                password = String(val.prefix(VaultCrypto.maximumPasswordLength))
+                            }
+                        }
                         .onSubmit {
                             submitPassword()
                         }

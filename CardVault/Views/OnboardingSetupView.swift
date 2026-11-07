@@ -93,11 +93,21 @@ struct OnboardingSetupView: View {
 
                         SecureField("至少 8 位，混合字母、数字与符号（≥40 bit）", text: $masterPassword)
                             .lockdownTextInput()
+                            .onValueChange(of: masterPassword) { val in
+                                if val.count > VaultCrypto.maximumPasswordLength {
+                                    masterPassword = String(val.prefix(VaultCrypto.maximumPasswordLength))
+                                }
+                            }
                             .padding(12)
                             .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                         SecureField("再次输入主密码确认", text: $confirmPassword)
                             .lockdownTextInput()
+                            .onValueChange(of: confirmPassword) { val in
+                                if val.count > VaultCrypto.maximumPasswordLength {
+                                    confirmPassword = String(val.prefix(VaultCrypto.maximumPasswordLength))
+                                }
+                            }
                             .padding(12)
                             .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 

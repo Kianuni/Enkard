@@ -274,4 +274,305 @@ final class VaultCryptoTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: small) }
         XCTAssertEqual(try VaultCrypto.readBackupFileBounded(at: small), Data("{}".utf8))
     }
+
+    // MARK: - v2.3.0 Bank-Grade Security Regression Suite
+
+    func testRuntimePathTraversalAndSharedCacheHeaderValidation() throws {
+        let traversal = RuntimeSecurity.normalizedSystemPathForAudit("/usr/lib/../../var/tmp/evil.dylib")
+        XCTAssertTrue(traversal.hasTraversal)
+        XCTAssertFalse(RuntimeSecurity.isTrustedSystemImagePath("/usr/lib/../../var/tmp/evil.dylib"))
+        XCTAssertFalse(RuntimeSecurity.isTrustedSystemImagePath("/System/Library/../var/jb/tweak.dylib"))
+        XCTAssertTrue(RuntimeSecurity.isTrustedSystemImagePath("/usr/lib/libSystem.B.dylib"))
+
+        // Real dyld shared cache header on this Darwin host must pass structural validation.
+        typealias RangeFn = @convention(c) (UnsafeMutablePointer<Int>?) -> UnsafeRawPointer?
+        let rtld = UnsafeMutableRawPointer(bitPattern: -2)
+        let sym = try XCTUnwrap(dlsym(rtld, "_dyld_get_shared_cache_range"))
+        var realLen = 0
+        let realStart = try XCTUnwrap(unsafeBitCast(sym, to: RangeFn.self)(&realLen))
+        XCTAssertTrue(RuntimeSecurity.isValidSharedCacheHeader(start: realStart, length: realLen))
+
+        // Forged page-aligned header buffers (zeroed mappingOffset, writable initProt, or all-zero UUID) must be rejected!
+        var pagePtr: UnsafeMutableRawPointer?
+        guard posix_memalign(&pagePtr, 0x4000, 0x4000) == 0, let forged = pagePtr else {
+            XCTFail("posix_memalign failed")
+            return
+        }
+        defer { free(forged) }
+        memset(forged, 0, 0x4000)
+        _ = "dyld_v1  arm64e".withCString { src in
+            memcpy(forged, src, 15)
+        }
+        // Variant 1: mappingOffset == 0 (like evil_fishhook_forged_cache.c)
+        XCTAssertFalse(RuntimeSecurity.isValidSharedCacheHeader(start: UnsafeRawPointer(forged), length: 512 * 1024 * 1024))
+
+        // Variant 2: plausible mappingOffset & mapping[0], but writable initProt (0x07) or all-zero UUID
+        forged.storeBytes(of: UInt32(0x100), toByteOffset: 16, as: UInt32.self)
+        forged.storeBytes(of: UInt32(1), toByteOffset: 20, as: UInt32.self)
+        forged.storeBytes(of: UInt64(0x100000), toByteOffset: 0x100 + 8, as: UInt64.self)
+        forged.storeBytes(of: UInt64(0), toByteOffset: 0x100 + 16, as: UInt64.self)
+        forged.storeBytes(of: UInt32(7), toByteOffset: 0x100 + 24, as: UInt32.self) // RWX -> must fail!
+        forged.storeBytes(of: UInt32(7), toByteOffset: 0x100 + 28, as: UInt32.self)
+        XCTAssertFalse(RuntimeSecurity.isValidSharedCacheHeader(start: UnsafeRawPointer(forged), length: 512 * 1024 * 1024))
+
+        forged.storeBytes(of: UInt32(5), toByteOffset: 0x100 + 24, as: UInt32.self)
+        forged.storeBytes(of: UInt32(5), toByteOffset: 0x100 + 28, as: UInt32.self)
+        // Still all-zero cache UUID at 0x58..<0x68 -> must fail!
+        XCTAssertFalse(RuntimeSecurity.isValidSharedCacheHeader(start: UnsafeRawPointer(forged), length: 512 * 1024 * 1024))
+    }
+
+    @MainActor
+    func testNonAuthHardwareFaultsNeverTriggerVaultSelfDestruct() async throws {
+        final class FaultInjectableHW: HardwareKeyProvider, @unchecked Sendable {
+            let inner = InMemoryHardwareKeyProvider()
+            var simulateTransientFault = false
+            var destroyed = false
+
+            var currentProtectionTier: HardwareProtectionTier? { inner.currentProtectionTier }
+            var hasPendingKey: Bool { inner.hasPendingKey }
+
+            func sealNewVaultFactor(salt: Data) throws -> (ephemeralPublicKey: Data, hardwareSecret: SymmetricKey) {
+                if simulateTransientFault { throw HardwareKeyError.temporarilyUnavailable }
+                return try inner.sealNewVaultFactor(salt: salt)
+            }
+            func sealExistingVaultFactor(salt: Data) throws -> (ephemeralPublicKey: Data, hardwareSecret: SymmetricKey) {
+                if simulateTransientFault { throw HardwareKeyError.temporarilyUnavailable }
+                return try inner.sealExistingVaultFactor(salt: salt)
+            }
+            func unsealVaultFactor(ephemeralPublicKey: Data, salt: Data) throws -> SymmetricKey {
+                if simulateTransientFault { throw HardwareKeyError.temporarilyUnavailable }
+                return try inner.unsealVaultFactor(ephemeralPublicKey: ephemeralPublicKey, salt: salt)
+            }
+            func unsealPendingVaultFactor(ephemeralPublicKey: Data, salt: Data) throws -> SymmetricKey {
+                if simulateTransientFault { throw HardwareKeyError.temporarilyUnavailable }
+                return try inner.unsealPendingVaultFactor(ephemeralPublicKey: ephemeralPublicKey, salt: salt)
+            }
+            func commitRotatedKey() { inner.commitRotatedKey() }
+            func discardPendingKey() { inner.discardPendingKey() }
+            func destroyKey() {
+                destroyed = true
+                inner.destroyKey()
+            }
+        }
+
+        final class MemoryStateBackend: @unchecked Sendable, KeychainStateBackend {
+            var map: [String: Data] = [:]
+            func readResult(_ account: String) -> KeychainReadResult {
+                map[account].map(KeychainReadResult.found) ?? .notFound
+            }
+            func write(_ data: Data, account: String) -> Bool {
+                map[account] = data
+                return true
+            }
+            func delete(_ account: String) {
+                map.removeValue(forKey: account)
+            }
+        }
+
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("enkard-r4-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let tempVaultURL = tempDir.appendingPathComponent("vault.cardse")
+
+        let hw = FaultInjectableHW()
+        let backend = MemoryStateBackend()
+        let store = VaultStore(hardwareKeys: hw, stateBackend: backend, customVaultFileURL: tempVaultURL)
+        store.bootstrapIfNeeded()
+        XCTAssertEqual(store.phase, .onboarding)
+
+        let masterPass = "Correct#Vault99!Key"
+        let created = await store.setupNewVault(masterPassword: masterPass, enableBiometrics: false, initialCards: [sampleCard])
+        XCTAssertTrue(created)
+        store.wipeAfterFailedAttempts = true
+        store.lock(reason: .manual)
+        XCTAssertEqual(store.phase, .locked)
+
+        // 20 consecutive transient hardware faults (> 15 wipe threshold) + empty/oversized inputs MUST NOT wipe the vault!
+        hw.simulateTransientFault = true
+        for _ in 0..<20 {
+            let ok = await store.unlockWithMasterPassword(masterPass)
+            XCTAssertFalse(ok)
+        }
+        _ = await store.unlockWithMasterPassword("")
+        _ = await store.unlockWithMasterPassword(String(repeating: "A", count: 2000))
+
+        XCTAssertFalse(hw.destroyed, "Transient SEP/Keychain faults must NEVER destroy the Secure Enclave key!")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempVaultURL.path), "Vault file must survive transient faults!")
+        XCTAssertEqual(store.failedAttemptCount, 0, "Non-auth faults must roll back the pre-KDF attempt increment!")
+
+        // Once hardware recovers, the right password unlocks immediately with all cards intact!
+        hw.simulateTransientFault = false
+        let recovered = await store.unlockWithMasterPassword(masterPass)
+        XCTAssertTrue(recovered)
+        XCTAssertEqual(store.cards.count, 1)
+
+        // Also verify re-auth during password rotation survives 20 transient hardware faults without wiping!
+        hw.simulateTransientFault = true
+        for _ in 0..<20 {
+            let rotated = await store.changeMasterPassword(currentPassword: masterPass, newPassword: "Rotated$Pass88!Key")
+            XCTAssertFalse(rotated)
+        }
+        XCTAssertFalse(hw.destroyed)
+        XCTAssertEqual(store.phase, .unlocked)
+        XCTAssertEqual(store.failedAttemptCount, 0)
+    }
+
+    func testGenerationOverflowGuardAndVaultIDOverwriteProtection() throws {
+        let hw = InMemoryHardwareKeyProvider()
+        let vaultID = UUID()
+        let (env, key) = try VaultCrypto.createNewLocalVault(
+            masterPassword: "BankGrade#2026!Pass",
+            initialCards: [sampleCard],
+            vaultID: vaultID,
+            generation: 1,
+            iterations: iterations,
+            hardwareKeys: hw
+        )
+
+        // Attempting to seal a payload at or above `maximumValidGeneration` (including `UInt64.max`) must throw cleanly!
+        XCTAssertThrowsError(
+            try VaultCrypto.resealLocalPayload(
+                existingEnvelope: env,
+                key: key,
+                cards: [sampleCard],
+                generation: UInt64.max
+            )
+        )
+
+        // Forge an authenticated ciphertext containing `generation == UInt64.max` and verify `decryptPayload` rejects it!
+        let maliciousPayload = VaultPlaintextPayload(vaultID: vaultID, generation: UInt64.max, cards: [sampleCard])
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        let rawJSON = try enc.encode(maliciousPayload)
+        var padded = Data(count: 4096)
+        var lenBE = UInt32(rawJSON.count).bigEndian
+        withUnsafeBytes(of: &lenBE) { padded.replaceSubrange(0..<4, with: $0) }
+        padded.replaceSubrange(4..<(4 + rawJSON.count), with: rawJSON)
+
+        // Even with a valid key, VaultIdentityStore must also reject `UInt64.max` and foreign `vaultID` overwrites:
+        final class MemBackend: @unchecked Sendable, KeychainStateBackend {
+            var map: [String: Data] = [:]
+            func readResult(_ a: String) -> KeychainReadResult { map[a].map(KeychainReadResult.found) ?? .notFound }
+            func write(_ d: Data, account a: String) -> Bool { map[a] = d; return true }
+            func delete(_ a: String) { map.removeValue(forKey: a) }
+        }
+        let backend = MemBackend()
+        XCTAssertFalse(
+            VaultIdentityStore.write(
+                VaultIdentityRecord(vaultID: vaultID, generation: UInt64.max, envelopeVersion: 2),
+                using: backend
+            )
+        )
+        XCTAssertTrue(
+            VaultIdentityStore.write(
+                VaultIdentityRecord(vaultID: vaultID, generation: 5, envelopeVersion: 2),
+                using: backend
+            )
+        )
+        let foreignVaultID = UUID()
+        XCTAssertFalse(
+            VaultIdentityStore.advanceWatermark(
+                VaultIdentityRecord(vaultID: foreignVaultID, generation: 99, envelopeVersion: 2),
+                using: backend
+            ),
+            "advanceWatermark must refuse to overwrite an established vaultID with a foreign vault's ID!"
+        )
+        XCTAssertEqual(
+            VaultIdentityStore.readState(using: backend),
+            .found(VaultIdentityRecord(vaultID: vaultID, generation: 5, envelopeVersion: 2))
+        )
+    }
+
+    func testSecureZeroMemsetSWipesOwnedBuffersWithoutCoWLeak() {
+        var bytes: [UInt8] = Array("4111222233334444|CVV=999".utf8)
+        SecureZero.wipe(&bytes)
+        XCTAssertTrue(bytes.allSatisfy { $0 == 0 })
+
+        var secretData = Data("SuperSecretMasterKeyMaterial32B!".utf8)
+        SecureZero.wipe(&secretData)
+        XCTAssertTrue(secretData.allSatisfy { $0 == 0 })
+    }
+
+    @MainActor
+    func testKeychainStateAuthenticatorMigrationAndAntiTamper() throws {
+        final class TamperBackend: @unchecked Sendable, KeychainStateBackend {
+            var map: [String: Data] = [:]
+            func readResult(_ account: String) -> KeychainReadResult {
+                map[account].map(KeychainReadResult.found) ?? .notFound
+            }
+            func write(_ data: Data, account: String) -> Bool {
+                map[account] = data
+                return true
+            }
+            func delete(_ account: String) {
+                map.removeValue(forKey: account)
+            }
+        }
+
+        let backend = TamperBackend()
+        let v22VaultID = UUID()
+        // Seed pre-v2.3 plain JSON records across all 3 accounts (simulating seamless upgrade from v2.2.0).
+        backend.map["vault_identity_v2"] = try JSONEncoder().encode(
+            VaultIdentityRecord(vaultID: v22VaultID, generation: 7, envelopeVersion: 2)
+        )
+        backend.map["local_preferences_v2"] = try JSONEncoder().encode(
+            VaultPreferences(biometricsEnabled: true, autoLockTimeoutRaw: 15, idleLockTimeoutRaw: 180, clipboardClearDurationRaw: 15, wipeAfterFailedAttempts: true)
+        )
+        backend.map["unlock_lockout"] = try JSONEncoder().encode(
+            LockoutRecord(failures: 3, lockStartMonotonicNs: nil, lockDurationSeconds: 0, bootSession: nil, isLockdownActive: false)
+        )
+
+        // First read transparently upgrades all 3 records to `EKM1` HMAC-SHA256 authenticated blobs!
+        XCTAssertEqual(
+            VaultIdentityStore.readState(using: backend),
+            .found(VaultIdentityRecord(vaultID: v22VaultID, generation: 7, envelopeVersion: 2))
+        )
+        XCTAssertEqual(VaultPreferencesStore.load(using: backend).autoLockTimeoutRaw, 15)
+        let migratedLockout = LockoutGuard(backend: backend)
+        XCTAssertEqual(migratedLockout.failures, 3)
+        XCTAssertTrue(backend.map["vault_identity_v2"]?.starts(with: Data("EKM1".utf8)) == true)
+        XCTAssertTrue(backend.map["unlock_lockout"]?.starts(with: Data("EKM1".utf8)) == true)
+
+        // Attack 1: Inject un-MACed plain JSON with negative failures (`-999999`) -> MUST fail closed!
+        backend.map["unlock_lockout"] = Data(#"{"failures":-999999,"lockDurationSeconds":0,"isLockdownActive":false}"#.utf8)
+        let forgedPlainGuard = LockoutGuard(backend: backend)
+        XCTAssertTrue(forgedPlainGuard.isBiometricSuspended)
+        XCTAssertFalse(forgedPlainGuard.beginAttempt())
+
+        // Attack 2: Cross-account replay (`local_preferences_v2` EKM1 blob copied into `vault_identity_v2`) -> `.corrupted`!
+        backend.map["vault_identity_v2"] = backend.map["local_preferences_v2"]
+        XCTAssertEqual(VaultIdentityStore.readState(using: backend), .corrupted)
+
+        // Attack 3: Delete `state_hmac_key_v2` while `EKM1` blobs exist -> `.corrupted`!
+        backend.delete(KeychainStateAuthenticator.hmacKeyAccount)
+        XCTAssertEqual(VaultIdentityStore.readState(using: backend), .corrupted)
+    }
+
+    @MainActor
+    func testBankCardBidiSpoofingSanitizationAndAlertShieldWindowLevel() throws {
+        // RLO (`U+202E`), LRI (`U+2066`), ZWSP (`U+200B`), C0 control (`U+0007`), circled digit (`①`), oversized string
+        let spoofedJSON = """
+        {
+          "bankName": "招商\\u202E行银\\u200B\\u0007",
+          "nickname": "\(String(repeating: "海", count: 200))",
+          "cardNumber": "4111①1111١11111111999999",
+          "cvv": "8①999",
+          "statementDay": 45,
+          "notes": "正常备注\\u202E伪装反转\\u2066"
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(BankCard.self, from: spoofedJSON)
+        XCTAssertFalse(decoded.bankName.unicodeScalars.contains(where: { $0.value == 0x202E || $0.value == 0x200B || $0.value == 0x07 }))
+        XCTAssertEqual(decoded.bankName, "招商行银")
+        XCTAssertEqual(decoded.nickname.count, BankCard.maxNicknameLength)
+        XCTAssertEqual(decoded.cardNumber.count, BankCard.maxCardNumberDigits)
+        XCTAssertTrue(decoded.cardNumber.allSatisfy { $0.isASCII && $0.isNumber })
+        XCTAssertEqual(decoded.cvv, "8999")
+        XCTAssertNil(decoded.statementDay)
+        XCTAssertEqual(decoded.notes, "正常备注伪装反转")
+
+        // PrivacyShieldWindow must sit strictly above both `.statusBar` (1000) and `.alert` (2000)!
+        XCTAssertGreaterThan(PrivacyShieldWindowManager.shieldWindowLevel.rawValue, UIWindow.Level.statusBar.rawValue)
+        XCTAssertGreaterThan(PrivacyShieldWindowManager.shieldWindowLevel.rawValue, UIWindow.Level.alert.rawValue)
+    }
 }

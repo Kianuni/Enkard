@@ -23,6 +23,7 @@ enum HardwareProtectionTier: String, Codable, Equatable, Sendable {
 
 enum HardwareKeyError: LocalizedError, Equatable {
     case keyNotFound
+    case temporarilyUnavailable
     case keyCreationFailed
     case keyAgreementFailed
     case invalidEphemeralPublicKey
@@ -31,6 +32,8 @@ enum HardwareKeyError: LocalizedError, Equatable {
         switch self {
         case .keyNotFound:
             return "未找到本机安全芯片绑定密钥（该加密库可能来自其他设备，或本机密钥已被安全销毁；跨设备请使用加密备份恢复）"
+        case .temporarilyUnavailable:
+            return "系统钥匙串或安全芯片当前暂不可访问，请先解锁手机屏幕后再试"
         case .keyCreationFailed:
             return "创建本机安全芯片密钥失败，请确认设备已解锁并开启锁屏密码"
         case .keyAgreementFailed:
@@ -101,8 +104,14 @@ struct DeviceHardwareKeyManager: HardwareKeyProvider {
     }
 
     func sealExistingVaultFactor(salt: Data) throws -> (ephemeralPublicKey: Data, hardwareSecret: SymmetricKey) {
-        if KeychainStateStore.read(Self.tokenAccount) == nil {
+        switch KeychainStateStore.readResult(Self.tokenAccount) {
+        case .found:
+            break
+        case .notFound:
             try provisionDeviceKey(tokenAccount: Self.tokenAccount, tierAccount: Self.tierAccount)
+        case .unavailable:
+            // Fail-Closed: NEVER overwrite an active Secure Enclave key token during transient Keychain unavailability!
+            throw HardwareKeyError.temporarilyUnavailable
         }
         let ephemeralPrivate = P256.KeyAgreement.PrivateKey()
         let ephemeralPublicX963 = ephemeralPrivate.publicKey.x963Representation
@@ -169,12 +178,21 @@ struct DeviceHardwareKeyManager: HardwareKeyProvider {
             throw HardwareKeyError.invalidEphemeralPublicKey
         }
 
-        guard let tokenData = KeychainStateStore.read(tokenAccount),
-              let tierData = KeychainStateStore.read(tierAccount),
+        let tokenResult = KeychainStateStore.readResult(tokenAccount)
+        let tierResult = KeychainStateStore.readResult(tierAccount)
+        if case .unavailable = tokenResult {
+            throw HardwareKeyError.temporarilyUnavailable
+        }
+        if case .unavailable = tierResult {
+            throw HardwareKeyError.temporarilyUnavailable
+        }
+        guard case .found(var tokenData) = tokenResult,
+              case .found(let tierData) = tierResult,
               let tierRaw = String(data: tierData, encoding: .utf8),
               let tier = HardwareProtectionTier(rawValue: tierRaw) else {
             throw HardwareKeyError.keyNotFound
         }
+        defer { SecureZero.wipe(&tokenData) }
 
         let sharedSecret: SharedSecret
         do {
@@ -243,7 +261,7 @@ struct DeviceHardwareKeyManager: HardwareKeyProvider {
         // Software Keychain fallback strictly for Simulator or unsigned macOS CLI test runners without SEP entitlement.
         let fallbackKey = P256.KeyAgreement.PrivateKey()
         var raw = fallbackKey.rawRepresentation
-        defer { raw.resetBytes(in: 0..<raw.count) }
+        defer { SecureZero.wipe(&raw) }
         guard persistToken(
             raw,
             tier: .keychainDeviceBoundFallback,

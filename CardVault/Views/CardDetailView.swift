@@ -294,12 +294,14 @@ struct CardDetailView: View {
                     if captured {
                         hidePlaintextImmediately()
                         showingEditor = false
+                        showingDeleteConfirm = false
                     }
                 }
                 .onValueChange(of: store.phase) { newPhase in
                     if newPhase != .unlocked {
                         hidePlaintextImmediately()
                         showingEditor = false
+                        showingDeleteConfirm = false
                     }
                 }
             } else {

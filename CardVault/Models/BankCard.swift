@@ -187,6 +187,20 @@ enum CardTheme: String, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 struct BankCard: Identifiable, Codable, Equatable, Hashable, Sendable {
+    static let maxBankNameLength = 64
+    static let maxNicknameLength = 64
+    static let maxCardNumberDigits = 19
+    static let maxCardholderNameLength = 64
+    static let maxExpiryMonthDigits = 2
+    static let maxExpiryYearDigits = 2
+    static let maxCVVDigits = 4
+    static let maxPINLength = 12
+    static let maxBillingAddressLength = 256
+    static let maxPostalCodeLength = 16
+    static let maxPhoneLast4Digits = 4
+    static let maxCreditLimitLength = 32
+    static let maxNotesLength = 2000
+
     var id: UUID
     var bankName: String
     var nickname: String
@@ -209,6 +223,12 @@ struct BankCard: Identifiable, Codable, Equatable, Hashable, Sendable {
     var isFavorite: Bool
     var createdAt: Date
     var updatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id, bankName, nickname, cardType, network, cardNumber, cardholderName
+        case expiryMonth, expiryYear, cvv, pin, billingAddress, postalCode, phoneLast4
+        case statementDay, dueDay, creditLimit, notes, theme, isFavorite, createdAt, updatedAt
+    }
 
     init(
         id: UUID = UUID(),
@@ -235,31 +255,99 @@ struct BankCard: Identifiable, Codable, Equatable, Hashable, Sendable {
         updatedAt: Date = Date()
     ) {
         self.id = id
-        self.bankName = bankName.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.nickname = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.bankName = Self.sanitizeText(bankName, maxLength: Self.maxBankNameLength)
+        self.nickname = Self.sanitizeText(nickname, maxLength: Self.maxNicknameLength)
         self.cardType = cardType
         self.network = network
-        self.cardNumber = cardNumber.filter(\.isWholeNumber)
-        self.cardholderName = cardholderName.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.expiryMonth = expiryMonth.filter(\.isWholeNumber)
+        self.cardNumber = String(Self.asciiDigitsOnly(cardNumber).prefix(Self.maxCardNumberDigits))
+        self.cardholderName = Self.sanitizeText(cardholderName, maxLength: Self.maxCardholderNameLength)
+        self.expiryMonth = String(Self.asciiDigitsOnly(expiryMonth).prefix(Self.maxExpiryMonthDigits))
         self.expiryYear = Self.normalizeYear(expiryYear)
-        self.cvv = cvv.filter(\.isWholeNumber)
-        self.pin = pin.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.billingAddress = billingAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.postalCode = postalCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.phoneLast4 = String(phoneLast4.filter(\.isWholeNumber).suffix(4))
-        self.statementDay = statementDay
-        self.dueDay = dueDay
-        self.creditLimit = creditLimit.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.cvv = String(Self.asciiDigitsOnly(cvv).prefix(Self.maxCVVDigits))
+        self.pin = Self.sanitizeText(pin, maxLength: Self.maxPINLength)
+        self.billingAddress = Self.sanitizeText(billingAddress, maxLength: Self.maxBillingAddressLength)
+        self.postalCode = Self.sanitizeText(postalCode, maxLength: Self.maxPostalCodeLength)
+        self.phoneLast4 = String(Self.asciiDigitsOnly(phoneLast4).suffix(Self.maxPhoneLast4Digits))
+        self.statementDay = statementDay.flatMap { (1...31).contains($0) ? $0 : nil }
+        self.dueDay = dueDay.flatMap { (1...31).contains($0) ? $0 : nil }
+        self.creditLimit = Self.sanitizeText(creditLimit, maxLength: Self.maxCreditLimitLength)
+        self.notes = Self.sanitizeText(notes, maxLength: Self.maxNotesLength, allowNewlines: true)
         self.theme = theme
         self.isFavorite = isFavorite
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID(),
+            bankName: try c.decodeIfPresent(String.self, forKey: .bankName) ?? "",
+            nickname: try c.decodeIfPresent(String.self, forKey: .nickname) ?? "",
+            cardType: try c.decodeIfPresent(CardType.self, forKey: .cardType) ?? .credit,
+            network: try c.decodeIfPresent(CardNetwork.self, forKey: .network) ?? .unionPay,
+            cardNumber: try c.decodeIfPresent(String.self, forKey: .cardNumber) ?? "",
+            cardholderName: try c.decodeIfPresent(String.self, forKey: .cardholderName) ?? "",
+            expiryMonth: try c.decodeIfPresent(String.self, forKey: .expiryMonth) ?? "",
+            expiryYear: try c.decodeIfPresent(String.self, forKey: .expiryYear) ?? "",
+            cvv: try c.decodeIfPresent(String.self, forKey: .cvv) ?? "",
+            pin: try c.decodeIfPresent(String.self, forKey: .pin) ?? "",
+            billingAddress: try c.decodeIfPresent(String.self, forKey: .billingAddress) ?? "",
+            postalCode: try c.decodeIfPresent(String.self, forKey: .postalCode) ?? "",
+            phoneLast4: try c.decodeIfPresent(String.self, forKey: .phoneLast4) ?? "",
+            statementDay: try c.decodeIfPresent(Int.self, forKey: .statementDay),
+            dueDay: try c.decodeIfPresent(Int.self, forKey: .dueDay),
+            creditLimit: try c.decodeIfPresent(String.self, forKey: .creditLimit) ?? "",
+            notes: try c.decodeIfPresent(String.self, forKey: .notes) ?? "",
+            theme: try c.decodeIfPresent(CardTheme.self, forKey: .theme) ?? .obsidianGold,
+            isFavorite: try c.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false,
+            createdAt: try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
+            updatedAt: try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+        )
+    }
+
+    /// Strips Unicode bidirectional override/isolate spoofing scalars (`RLO` `U+202E`, `LRI` `U+2066`, etc.),
+    /// zero-width formatters, and C0/C1 control characters, then trims and caps length.
+    static func sanitizeText(_ raw: String, maxLength: Int, allowNewlines: Bool = false) -> String {
+        guard !raw.isEmpty, maxLength > 0 else { return "" }
+        let boundedScalars = raw.unicodeScalars.prefix(maxLength * 8)
+        var cleaned = String.UnicodeScalarView()
+        for scalar in boundedScalars {
+            let v = scalar.value
+            // Strip Bidi overrides/isolates/marks & invisible formatters
+            if v == 0x061C
+                || (0x200B...0x200F).contains(v)
+                || (0x202A...0x202E).contains(v)
+                || (0x2060...0x2069).contains(v)
+                || v == 0xFEFF
+                || (0xFFF9...0xFFFB).contains(v) {
+                continue
+            }
+            // Strip C0 / DEL / C1 control characters (preserving \n and \t only when multiline notes are allowed)
+            if v < 0x20 || (0x7F...0x9F).contains(v) {
+                if allowNewlines && (v == 0x0A || v == 0x09) {
+                    cleaned.append(scalar)
+                }
+                continue
+            }
+            cleaned.append(scalar)
+        }
+        let trimmed = String(cleaned).trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count > maxLength {
+            return String(trimmed.prefix(maxLength))
+        }
+        return trimmed
+    }
+
+    static func asciiDigitsOnly(_ raw: String) -> String {
+        String(raw.unicodeScalars.prefix(256).compactMap { scalar -> Character? in
+            guard scalar.value >= 0x30 && scalar.value <= 0x39 else { return nil }
+            return Character(scalar)
+        })
+    }
+
     static func normalizeYear(_ raw: String) -> String {
-        let digits = raw.filter(\.isWholeNumber)
+        let digits = asciiDigitsOnly(raw)
         if digits.count == 4 {
             return String(digits.suffix(2))
         }
@@ -267,7 +355,7 @@ struct BankCard: Identifiable, Codable, Equatable, Hashable, Sendable {
     }
 
     var digitsOnly: String {
-        cardNumber.filter(\.isWholeNumber)
+        Self.asciiDigitsOnly(cardNumber)
     }
 
     var last4: String {

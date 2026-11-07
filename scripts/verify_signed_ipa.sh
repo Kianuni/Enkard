@@ -15,14 +15,20 @@ INTEGRITY_FILE="$PROJECT_DIR/dist/Enkard-integrity.sha256"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-# Pre-extraction Zip-Slip path traversal guard
+# Pre-extraction Zip-Slip & ZIP-symlink guard (inspects central directory BEFORE `unzip` touches disk!)
 while IFS= read -r zip_entry; do
   [[ -z "$zip_entry" ]] && continue
-  if [[ "$zip_entry" == /* || "$zip_entry" == *".."* || "$zip_entry" == -* ]]; then
+  if [[ "$zip_entry" == /* || "$zip_entry" == *".."* || "$zip_entry" == -* || "$zip_entry" == *"\\"* ]]; then
     echo "❌ IPA 压缩包内包含危险路径穿越条目：$zip_entry" >&2
     exit 1
   fi
 done < <(/usr/bin/unzip -Z1 "$1")
+
+zip_symlinks="$(/usr/bin/unzip -Z -l "$1" | /usr/bin/awk '/^l/ {print $NF}')"
+if [[ -n "$zip_symlinks" ]]; then
+  echo "❌ IPA 压缩包在解压前检测到符号链接条目：$zip_symlinks" >&2
+  exit 1
+fi
 
 /usr/bin/unzip -q "$1" -d "$WORK_DIR"
 
@@ -198,6 +204,55 @@ if /usr/bin/codesign --verify --deep --strict "$APP_DIR" 2>/dev/null; then
     failed=1
   else
     echo "✅ 无 iCloud / Ubiquity / 推送同步权限"
+  fi
+
+  if [[ -n "$entitlements" ]]; then
+    ENT_XML_PATH="$WORK_DIR/extracted_entitlements.xml"
+    print -r -- "$entitlements" > "$ENT_XML_PATH"
+    ent_isolation_err="$(/usr/bin/python3 - "$ENT_XML_PATH" << 'PY'
+import plistlib, sys
+path = sys.argv[1]
+try:
+    with open(path, "rb") as f:
+        raw = f.read()
+    idx = raw.find(b"<?xml")
+    if idx < 0:
+        sys.exit(0)
+    ent = plistlib.loads(raw[idx:])
+except Exception as e:
+    print(f"无法解析签名 Entitlements XML: {e}")
+    sys.exit(1)
+
+bad = []
+app_groups = ent.get("com.apple.security.application-groups")
+if app_groups:
+    bad.append(f"存在共享 App Group 容器权限 ({app_groups})，可能导致沙盒文件被同签名伴生应用读取")
+
+for k in ("com.apple.developer.associated-domains", "com.apple.developer.networking.networkextension", "com.apple.developer.networking.vpn.api"):
+    if ent.get(k):
+        bad.append(f"存在非预期网络/关联域权限 ({k})")
+
+app_id = ent.get("application-identifier", "")
+kc_groups = ent.get("keychain-access-groups")
+if kc_groups is not None:
+    if not isinstance(kc_groups, list) or len(kc_groups) > 1:
+        bad.append(f"keychain-access-groups 数量异常 ({kc_groups})，疑似注入跨应用共享钥匙串组")
+    elif len(kc_groups) == 1:
+        g = str(kc_groups[0])
+        if "*" in g or (app_id and g != app_id):
+            bad.append(f"keychain-access-groups ({g}) 与 application-identifier ({app_id}) 不一致或含通配符")
+
+if bad:
+    print("；".join(bad))
+    sys.exit(1)
+PY
+    )" || {
+      echo "❌ 签名隔离权限检查失败：$ent_isolation_err"
+      failed=1
+    }
+    if [[ -z "${ent_isolation_err:-}" ]]; then
+      echo "✅ 无共享 App Group / 跨应用共享 Keychain 组 / 关联域权限"
+    fi
   fi
 else
   echo "⚠️  当前 IPA 尚未完成有效代码签名（若检查的是未签名包属正常现象）"

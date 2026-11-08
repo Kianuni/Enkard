@@ -169,22 +169,25 @@ enum PasswordPolicy {
             warnings.append("包含手机号特征片段")
         }
 
-        // Inspect digit core even when wrapped in symbols/punctuation (e.g. `19900101。`, `@13812345678!`).
+        // Inspect digit core even when wrapped in symbols/punctuation (e.g. `19900101。`, `@13812345678!`, `!@#19900101$%^`).
         let digitsExtracted = String(password.filter(\.isWholeNumber))
-        let nonDigitCount = password.count - digitsExtracted.count
-        let extraTailBits = Double(nonDigitCount) * min(asciiPoolBits, 5.5)
+        let nonDigits = password.filter { !$0.isWholeNumber }
+        let nonDigitCount = nonDigits.count
+        let nonDigitsAllSymbols = !nonDigits.isEmpty && nonDigits.allSatisfy { !$0.isLetter }
+        let wrapperAllowance = nonDigitsAllSymbols ? 6 : 3
+        let extraTailBits = Double(nonDigitCount) * (nonDigitsAllSymbols ? 2.0 : min(asciiPoolBits, 5.5))
 
-        if digitsExtracted.count >= 6 && nonDigitCount <= 3 {
+        if digitsExtracted.count >= 6 && nonDigitCount <= wrapperAllowance {
             if looksLikeDate(digitsExtracted) || looksLikeDate(String(digitsExtracted.prefix(8))) {
                 bits = min(bits, 18 + extraTailBits)
                 warnings.append("主体看起来像生日或日期")
             }
             if digitsExtracted.count == 11 && digitsExtracted.hasPrefix("1") {
-                bits = min(bits, 28 + extraTailBits)
+                bits = min(bits, 26 + extraTailBits)
                 warnings.append("主体看起来像手机号")
             }
             if digitsExtracted.count == 15 || digitsExtracted.count == 18 {
-                bits = min(bits, 28 + extraTailBits)
+                bits = min(bits, 26 + extraTailBits)
                 warnings.append("主体看起来像身份证号")
             }
         }
@@ -329,14 +332,34 @@ enum PasswordPolicy {
         return (bits, hasRepeated)
     }
 
+    private static func monotoneRunLength(from scalars: [Unicode.Scalar], at start: Int) -> Int {
+        guard start + 4 <= scalars.count else { return 0 }
+        let first = Int64(scalars[start].value)
+        let second = Int64(scalars[start + 1].value)
+        let delta = second - first
+        guard delta == 0 || delta == 1 || delta == -1 else { return 0 }
+        var len = 2
+        while start + len < scalars.count {
+            let prev = Int64(scalars[start + len - 1].value)
+            let curr = Int64(scalars[start + len].value)
+            if curr - prev == delta {
+                len += 1
+            } else {
+                break
+            }
+        }
+        return len >= 4 ? len : 0
+    }
+
     private static func segmentedBits(
         _ password: String,
         asciiPoolBits: Double
     ) -> (bits: Double, words: [String], hasYear: Bool, hasDate: Bool, hasPhone: Bool) {
         let original = Array(password)
-        let normalized = original.map { char -> Character in
-            let lower = Character(char.lowercased())
-            return leetMap[lower] ?? lower
+        let originalLower = original.map { Character($0.lowercased()) }
+        let originalScalars = original.map { $0.unicodeScalars.first ?? Unicode.Scalar(UInt8(32)) }
+        let normalized = originalLower.map { lower -> Character in
+            leetMap[lower] ?? lower
         }
         let maxWordLength = dictionaryWords.map(\.count).max() ?? 0
 
@@ -368,6 +391,25 @@ enum PasswordPolicy {
                     continue
                 }
             }
+
+            let remainingLower = String(originalLower[index...])
+            if let frag = segmentedWeakFragments.first(where: { remainingLower.hasPrefix($0) }) {
+                bits += 4.5
+                index += frag.count
+                continue
+            }
+            if let walk = keyboardWalks.first(where: { remainingLower.hasPrefix($0) }) {
+                bits += 5.0
+                index += walk.count
+                continue
+            }
+            let runLen = monotoneRunLength(from: originalScalars, at: index)
+            if runLen >= 4 {
+                bits += 4.5
+                index += runLen
+                continue
+            }
+
             if index + 4 <= original.count,
                let year = Int(String(original[index..<(index + 4)])),
                (1900...2099).contains(year) {
@@ -392,9 +434,22 @@ enum PasswordPolicy {
                 words.append(String(normalized[index..<(index + matched)]))
                 index += matched
             } else {
-                let ch = original[index]
-                let scalar = ch.unicodeScalars.first ?? Unicode.Scalar(UInt8(32))
-                bits += classifyScalar(scalar) == .nonAsciiLetter ? 9.5 : asciiPoolBits
+                let scalar = originalScalars[index]
+                let weight: Double
+                if index == 0 {
+                    weight = 1.0
+                } else {
+                    let prev = originalScalars[index - 1].value
+                    if scalar.value == prev {
+                        weight = 0.15
+                    } else if scalar.value == prev &+ 1 || scalar.value &+ 1 == prev {
+                        weight = 0.35
+                    } else {
+                        weight = 1.0
+                    }
+                }
+                let charBits = classifyScalar(scalar) == .nonAsciiLetter ? 9.5 : asciiPoolBits
+                bits += weight * charBits
                 index += 1
             }
         }
@@ -404,7 +459,7 @@ enum PasswordPolicy {
     private static let dictionaryWords: Set<String> = [
         "love", "baby", "angel", "monkey", "dragon", "shadow", "master", "sunshine", "princess",
         "football", "baseball", "soccer", "hockey", "killer", "flower", "summer", "winter", "spring",
-        "autumn", "hello", "welcome", "freedom", "secret", "money", "letmein", "admin", "qwerty",
+        "autumn", "hello", "welcome", "freedom", "secret", "money", "letmein", "admin", "administrator", "qwerty",
         "super", "star", "lucky", "happy", "smile", "apple", "banana", "orange", "cherry", "chocolate",
         "cookie", "pepper", "ginger", "tiger", "lion", "eagle", "horse", "puppy", "kitty", "bear",
         "wolf", "fish", "bird", "rabbit", "panda", "computer", "internet", "google", "iphone",
@@ -422,7 +477,8 @@ enum PasswordPolicy {
         "woaini", "aini", "wode", "baobei", "laopo", "laogong", "qinai", "xingfu", "kuaile",
         "pingan", "zhongguo", "beijing", "shanghai", "shenzhen", "guangzhou", "zhang", "wang",
         "chen", "yang", "huang", "zhao", "zhou", "xiao", "liang", "ming", "hong", "jian", "yong",
-        "feng", "long", "tian", "xing", "mima", "nihao", "haha", "hehe", "taobao", "weixin", "baidu"
+        "feng", "long", "tian", "xing", "mima", "nihao", "haha", "hehe", "taobao", "weixin", "baidu",
+        "alipay", "wechat", "tencent", "meituan", "douyin"
     ]
 
     private static func looksLikeDate(_ digits: String) -> Bool {
@@ -444,8 +500,16 @@ enum PasswordPolicy {
     }
 
     private static let keyboardWalks = [
-        "qwert", "werty", "asdfg", "sdfgh", "zxcvb", "yuiop", "hjkl",
-        "1qaz", "2wsx", "3edc", "qazwsx", "1q2w3e", "!@#$", "zaq1"
+        "qwertyuiop", "qwerty", "qwert", "werty", "asdfgh", "asdfg", "sdfgh", "zxcvbn", "zxcvb", "yuiop", "hjkl",
+        "1qaz2wsx", "qazwsx", "1q2w3e4r", "1q2w3e", "1qaz", "2wsx", "3edc", "zaq1",
+        "!@#$%^&*", "!@#$%^", "!@#$%", "!@#$", "@#$%", "#$%^", "$%^&", "%^&*", "^&*(",
+        "!@#", "@#$", "#$%", "$%^", "%^&", "^&*", "&*(", "*()"
+    ]
+
+    private static let segmentedWeakFragments = [
+        "5201314", "1314520", "1234567890", "123456789", "12345678", "1234567", "123456",
+        "987654321", "87654321", "654321", "abc12345", "abc123",
+        "888888", "666666", "111111", "000000", "1314", "520"
     ]
 
     private static let commonFragments = [

@@ -163,8 +163,18 @@ final class VaultStore: ObservableObject {
             antiDebugActive: AppDelegate.antiDebugEnabledAtLaunch
         )
         migrateLegacyStorageDirectoryIfNeeded()
+        refreshStorageDirectoryProtection()
         refreshScreenCaptureState()
         loadVaultStateFromDisk()
+    }
+
+    private func refreshStorageDirectoryProtection() {
+        let folder = storageDirectoryURL
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.complete],
+            ofItemAtPath: folder.path
+        )
+        excludeFromAllBackups(folder)
     }
 
     private func savePreferences() {
@@ -183,7 +193,12 @@ final class VaultStore: ObservableObject {
         if let customVaultFileURL {
             let folder = customVaultFileURL.deletingLastPathComponent()
             if !FileManager.default.fileExists(atPath: folder.path) {
-                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try? FileManager.default.createDirectory(
+                    at: folder,
+                    withIntermediateDirectories: true,
+                    attributes: [.protectionKey: FileProtectionType.complete]
+                )
+                excludeFromAllBackups(folder)
             }
             return folder
         }
@@ -1458,9 +1473,13 @@ final class VaultStore: ObservableObject {
         excludeFromAllBackups(url)
     }
 
-    /// Releases decrypted state. `SymmetricKey` zeroes its storage on deallocation.
+    /// Releases decrypted state and scrubs inline SSO slots before freeing buffer capacity.
+    /// `SymmetricKey` zeroes its storage on deallocation.
     private func wipeSensitiveMemory() {
-        cards = []
+        for index in cards.indices {
+            cards[index].scrubInPlace()
+        }
+        cards.removeAll(keepingCapacity: false)
         activeKey = nil
         currentGeneration = 0
     }

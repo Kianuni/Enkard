@@ -441,6 +441,27 @@ struct BankCard: Identifiable, Codable, Equatable, Hashable, Sendable {
             return groups.joined(separator: " ")
         }
     }
+
+    /// Overwrites inline small-string (SSO) slots inside contiguous `Array<BankCard>` buffers before deallocation.
+    mutating func scrubInPlace() {
+        id = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+        bankName = ""
+        nickname = ""
+        cardNumber = ""
+        cardholderName = ""
+        expiryMonth = ""
+        expiryYear = ""
+        cvv = ""
+        pin = ""
+        billingAddress = ""
+        postalCode = ""
+        phoneLast4 = ""
+        statementDay = nil
+        dueDay = nil
+        creditLimit = ""
+        notes = ""
+        isFavorite = false
+    }
 }
 
 enum ExpiryStatus: Equatable, Sendable {

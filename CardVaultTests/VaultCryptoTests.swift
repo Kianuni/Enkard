@@ -599,4 +599,597 @@ final class VaultCryptoTests: XCTestCase {
         XCTAssertGreaterThan(PrivacyShieldWindowManager.shieldWindowLevel.rawValue, UIWindow.Level.statusBar.rawValue)
         XCTAssertGreaterThan(PrivacyShieldWindowManager.shieldWindowLevel.rawValue, UIWindow.Level.alert.rawValue)
     }
+
+    // MARK: - Adversarial Security Challenge Suite (Milestone 2)
+
+    private func computePayloadAAD(envelope: VaultEnvelope) -> Data {
+        func appendUInt64(_ target: inout Data, _ value: UInt64) {
+            var be = value.bigEndian
+            withUnsafeBytes(of: &be) { target.append(contentsOf: $0) }
+        }
+        func appendLP(_ target: inout Data, _ field: Data) {
+            appendUInt64(&target, UInt64(field.count))
+            target.append(field)
+        }
+        var out = Data("CARDSE_PAYLOAD_AAD_V2".utf8)
+        appendLP(&out, Data(envelope.magic.utf8))
+        appendUInt64(&out, UInt64(envelope.version))
+        var uuidBytes = (envelope.vaultID ?? UUID()).uuid
+        withUnsafeBytes(of: &uuidBytes) { appendLP(&out, Data($0)) }
+        appendUInt64(&out, UInt64(envelope.kdfIterations))
+        appendLP(&out, envelope.salt)
+        appendLP(&out, envelope.ephemeralPublicKey ?? Data())
+        let wrappedHash = Data(SHA256.hash(data: envelope.wrappedDEK))
+        appendLP(&out, wrappedHash)
+        return out
+    }
+
+    func testAdversarialAADAntiSplicingBitFlips() throws {
+        let hw = InMemoryHardwareKeyProvider()
+        let (resealed, key) = try VaultCrypto.createNewLocalVault(
+            masterPassword: "MasterPassword#Alpha9",
+            initialCards: [sampleCard],
+            generation: 1,
+            iterations: iterations,
+            hardwareKeys: hw
+        )
+
+        // Baseline: unmodified envelope decrypts cleanly
+        let validPayload = try VaultCrypto.decryptPayload(envelope: resealed, key: key, expectedDomain: .localVault)
+        XCTAssertEqual(validPayload.cards.first?.cvv, "618")
+
+        // 1. Mutate iterations (flip 1 bit) -> must fail AES-GCM tag verification via AAD before JSON parsing
+        let mutatedIterationsEnv = VaultEnvelope(
+            magic: resealed.magic,
+            version: resealed.version,
+            vaultID: resealed.vaultID,
+            kdfIterations: resealed.kdfIterations ^ 1,
+            salt: resealed.salt,
+            ephemeralPublicKey: resealed.ephemeralPublicKey,
+            wrappedDEK: resealed.wrappedDEK,
+            encryptedPayload: resealed.encryptedPayload,
+            updatedAt: resealed.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: mutatedIterationsEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .authenticationFailed) }
+
+        // 2. Mutate salt (flip 1 bit in salt) -> authenticationFailed via AAD
+        var mutatedSalt = resealed.salt
+        mutatedSalt[0] ^= 0x01
+        let mutatedSaltEnv = VaultEnvelope(
+            magic: resealed.magic,
+            version: resealed.version,
+            vaultID: resealed.vaultID,
+            kdfIterations: resealed.kdfIterations,
+            salt: mutatedSalt,
+            ephemeralPublicKey: resealed.ephemeralPublicKey,
+            wrappedDEK: resealed.wrappedDEK,
+            encryptedPayload: resealed.encryptedPayload,
+            updatedAt: resealed.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: mutatedSaltEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .authenticationFailed) }
+
+        // 3. Mutate ephemeralPublicKey (flip 1 bit) -> authenticationFailed via AAD
+        guard var mutatedPubKey = resealed.ephemeralPublicKey else {
+            XCTFail("Missing ephemeral public key in local vault")
+            return
+        }
+        mutatedPubKey[0] ^= 0x01
+        let mutatedPubKeyEnv = VaultEnvelope(
+            magic: resealed.magic,
+            version: resealed.version,
+            vaultID: resealed.vaultID,
+            kdfIterations: resealed.kdfIterations,
+            salt: resealed.salt,
+            ephemeralPublicKey: mutatedPubKey,
+            wrappedDEK: resealed.wrappedDEK,
+            encryptedPayload: resealed.encryptedPayload,
+            updatedAt: resealed.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: mutatedPubKeyEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .authenticationFailed) }
+
+        // 4. Mutate wrappedDEK (flip 1 bit) -> authenticationFailed via SHA256(wrappedDEK) in AAD
+        var mutatedWrappedDEK = resealed.wrappedDEK
+        mutatedWrappedDEK[0] ^= 0x01
+        let mutatedWrappedEnv = VaultEnvelope(
+            magic: resealed.magic,
+            version: resealed.version,
+            vaultID: resealed.vaultID,
+            kdfIterations: resealed.kdfIterations,
+            salt: resealed.salt,
+            ephemeralPublicKey: resealed.ephemeralPublicKey,
+            wrappedDEK: mutatedWrappedDEK,
+            encryptedPayload: resealed.encryptedPayload,
+            updatedAt: resealed.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: mutatedWrappedEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .authenticationFailed) }
+
+        // 5. Mutate vaultID (foreign UUID) -> authenticationFailed via AAD
+        let mutatedVaultIDEnv = VaultEnvelope(
+            magic: resealed.magic,
+            version: resealed.version,
+            vaultID: UUID(),
+            kdfIterations: resealed.kdfIterations,
+            salt: resealed.salt,
+            ephemeralPublicKey: resealed.ephemeralPublicKey,
+            wrappedDEK: resealed.wrappedDEK,
+            encryptedPayload: resealed.encryptedPayload,
+            updatedAt: resealed.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: mutatedVaultIDEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .authenticationFailed) }
+
+        // 6. Mutate magic -> header validation rejects before touching payload
+        let mutatedMagicEnv = VaultEnvelope(
+            magic: "CARD9",
+            version: resealed.version,
+            vaultID: resealed.vaultID,
+            kdfIterations: resealed.kdfIterations,
+            salt: resealed.salt,
+            ephemeralPublicKey: resealed.ephemeralPublicKey,
+            wrappedDEK: resealed.wrappedDEK,
+            encryptedPayload: resealed.encryptedPayload,
+            updatedAt: resealed.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: mutatedMagicEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .invalidEnvelopeFormat) }
+
+        // 7. Mutate version -> header validation rejects before touching payload
+        let mutatedVersionEnv = VaultEnvelope(
+            magic: resealed.magic,
+            version: 3,
+            vaultID: resealed.vaultID,
+            kdfIterations: resealed.kdfIterations,
+            salt: resealed.salt,
+            ephemeralPublicKey: resealed.ephemeralPublicKey,
+            wrappedDEK: resealed.wrappedDEK,
+            encryptedPayload: resealed.encryptedPayload,
+            updatedAt: resealed.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: mutatedVersionEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .invalidEnvelopeFormat) }
+
+        // 8. Mutate ciphertext byte in encryptedPayload -> AES-GCM tag verification failure
+        var mutatedCiphertext = resealed.encryptedPayload
+        mutatedCiphertext[12] ^= 0x01
+        let mutatedCiphertextEnv = VaultEnvelope(
+            magic: resealed.magic,
+            version: resealed.version,
+            vaultID: resealed.vaultID,
+            kdfIterations: resealed.kdfIterations,
+            salt: resealed.salt,
+            ephemeralPublicKey: resealed.ephemeralPublicKey,
+            wrappedDEK: resealed.wrappedDEK,
+            encryptedPayload: mutatedCiphertext,
+            updatedAt: resealed.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: mutatedCiphertextEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .authenticationFailed) }
+
+        // 9. Mutate AES-GCM auth tag byte (last byte of combined payload) -> authenticationFailed
+        var mutatedTag = resealed.encryptedPayload
+        mutatedTag[mutatedTag.count - 1] ^= 0x01
+        let mutatedTagEnv = VaultEnvelope(
+            magic: resealed.magic,
+            version: resealed.version,
+            vaultID: resealed.vaultID,
+            kdfIterations: resealed.kdfIterations,
+            salt: resealed.salt,
+            ephemeralPublicKey: resealed.ephemeralPublicKey,
+            wrappedDEK: resealed.wrappedDEK,
+            encryptedPayload: mutatedTag,
+            updatedAt: resealed.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: mutatedTagEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .authenticationFailed) }
+    }
+
+    func testAdversarialPaddingCorruptionsAndBoundaryRejections() throws {
+        let hw = InMemoryHardwareKeyProvider()
+        let (env, key) = try VaultCrypto.createNewLocalVault(
+            masterPassword: "PadTest#Password99!",
+            initialCards: [sampleCard],
+            generation: 1,
+            iterations: iterations,
+            hardwareKeys: hw
+        )
+        let aad = computePayloadAAD(envelope: env)
+
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        let payload = VaultPlaintextPayload(vaultID: env.vaultID ?? UUID(), generation: 1, cards: [sampleCard])
+        let rawJSON = try enc.encode(payload)
+
+        // 1. Padded block with corrupted non-zero padding byte in the 4096-byte bucket
+        var nonZeroPadding = Data(count: 4096)
+        var lenBE = UInt32(rawJSON.count).bigEndian
+        withUnsafeBytes(of: &lenBE) { nonZeroPadding.replaceSubrange(0..<4, with: $0) }
+        nonZeroPadding.replaceSubrange(4..<(4 + rawJSON.count), with: rawJSON)
+        // Inject non-zero byte in the padding area:
+        nonZeroPadding[4 + rawJSON.count] = 0x5A
+
+        let nonZeroSealed = try AES.GCM.seal(nonZeroPadding, using: key, nonce: AES.GCM.Nonce(), authenticating: aad)
+        guard let nonZeroCombined = nonZeroSealed.combined else {
+            XCTFail("Sealing failed")
+            return
+        }
+        let nonZeroEnv = VaultEnvelope(
+            magic: env.magic, version: env.version, vaultID: env.vaultID,
+            kdfIterations: env.kdfIterations, salt: env.salt,
+            ephemeralPublicKey: env.ephemeralPublicKey, wrappedDEK: env.wrappedDEK,
+            encryptedPayload: nonZeroCombined, updatedAt: env.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: nonZeroEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .corruptedPayload) }
+
+        // 2. Buffer length not a multiple of 4096:
+        // Case A: 4095 bytes (fails minimum envelope byte check in validateV2Header)
+        var shortPadding = Data(count: 4095)
+        var shortLenBE = UInt32(rawJSON.count).bigEndian
+        withUnsafeBytes(of: &shortLenBE) { shortPadding.replaceSubrange(0..<4, with: $0) }
+        shortPadding.replaceSubrange(4..<(4 + rawJSON.count), with: rawJSON)
+        let shortSealed = try AES.GCM.seal(shortPadding, using: key, nonce: AES.GCM.Nonce(), authenticating: aad)
+        guard let shortCombined = shortSealed.combined else { return }
+        let shortEnv = VaultEnvelope(
+            magic: env.magic, version: env.version, vaultID: env.vaultID,
+            kdfIterations: env.kdfIterations, salt: env.salt,
+            ephemeralPublicKey: env.ephemeralPublicKey, wrappedDEK: env.wrappedDEK,
+            encryptedPayload: shortCombined, updatedAt: env.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: shortEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .invalidEnvelopeFormat) }
+
+        // Case B: 4097 bytes (passes validateV2Header, fails unframePaddedPayloadRangeV2 modulo check)
+        var unalignedPadding = Data(count: 4097)
+        var unalignedLenBE = UInt32(rawJSON.count).bigEndian
+        withUnsafeBytes(of: &unalignedLenBE) { unalignedPadding.replaceSubrange(0..<4, with: $0) }
+        unalignedPadding.replaceSubrange(4..<(4 + rawJSON.count), with: rawJSON)
+        let unalignedSealed = try AES.GCM.seal(unalignedPadding, using: key, nonce: AES.GCM.Nonce(), authenticating: aad)
+        guard let unalignedCombined = unalignedSealed.combined else { return }
+        let unalignedEnv = VaultEnvelope(
+            magic: env.magic, version: env.version, vaultID: env.vaultID,
+            kdfIterations: env.kdfIterations, salt: env.salt,
+            ephemeralPublicKey: env.ephemeralPublicKey, wrappedDEK: env.wrappedDEK,
+            encryptedPayload: unalignedCombined, updatedAt: env.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: unalignedEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .corruptedPayload) }
+
+        // 3. Framing length < 2 (e.g. 1)
+        var tinyLenPadding = Data(count: 4096)
+        var tinyLenBE = UInt32(1).bigEndian
+        withUnsafeBytes(of: &tinyLenBE) { tinyLenPadding.replaceSubrange(0..<4, with: $0) }
+        let tinySealed = try AES.GCM.seal(tinyLenPadding, using: key, nonce: AES.GCM.Nonce(), authenticating: aad)
+        guard let tinyCombined = tinySealed.combined else { return }
+        let tinyEnv = VaultEnvelope(
+            magic: env.magic, version: env.version, vaultID: env.vaultID,
+            kdfIterations: env.kdfIterations, salt: env.salt,
+            ephemeralPublicKey: env.ephemeralPublicKey, wrappedDEK: env.wrappedDEK,
+            encryptedPayload: tinyCombined, updatedAt: env.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: tinyEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .corruptedPayload) }
+
+        // 4. Framing length overflow: 4093 in 4096-byte frame (4 + 4093 = 4097 > 4096)
+        var overflowLenPadding = Data(count: 4096)
+        var overflowLenBE = UInt32(4093).bigEndian
+        withUnsafeBytes(of: &overflowLenBE) { overflowLenPadding.replaceSubrange(0..<4, with: $0) }
+        let overflowSealed = try AES.GCM.seal(overflowLenPadding, using: key, nonce: AES.GCM.Nonce(), authenticating: aad)
+        guard let overflowCombined = overflowSealed.combined else { return }
+        let overflowEnv = VaultEnvelope(
+            magic: env.magic, version: env.version, vaultID: env.vaultID,
+            kdfIterations: env.kdfIterations, salt: env.salt,
+            ephemeralPublicKey: env.ephemeralPublicKey, wrappedDEK: env.wrappedDEK,
+            encryptedPayload: overflowCombined, updatedAt: env.updatedAt
+        )
+        XCTAssertThrowsError(
+            try VaultCrypto.decryptPayload(envelope: overflowEnv, key: key, expectedDomain: .localVault)
+        ) { XCTAssertEqual($0 as? VaultCryptoError, .corruptedPayload) }
+    }
+
+    func testAdversarialPasswordPolicyAndEntropyStress() {
+        // 1. Weak passwords wrapped in punctuation / symbols rejected for BOTH master and backup (< 40 bits)
+        let weakWrapped = [
+            "1234567！", "19900101。", "@13812345678!",
+            "!!12345678!!", "P@ssw0rd2026!",
+            "19900101520。", "!#12345678*&"
+        ]
+        for weak in weakWrapped {
+            XCTAssertNotNil(
+                PasswordPolicy.validationMessage(weak, for: .master),
+                "Should reject weak wrapped password for master: \(weak)"
+            )
+            XCTAssertNotNil(
+                PasswordPolicy.validationMessage(weak, for: .backup),
+                "Should reject weak wrapped password for backup: \(weak)"
+            )
+        }
+
+        // 1b. Composite weak passwords (dictionary/pinyin + weak digit runs, or symbol-walk wrapped dates)
+        // MUST be discounted below 40 bits and rejected for BOTH master and backup (SEC-CHALLENGE-001 fix verification)!
+        let compositeWeak = ["admin123456!", "woaini1314520!", "!@#19900101$%^", "taobao888888!", "Password#99!"]
+        for pass in compositeWeak {
+            let assessment = PasswordPolicy.assess(pass)
+            XCTAssertFalse(assessment.warnings.isEmpty, "Should have warnings: \(pass)")
+            XCTAssertLessThan(assessment.estimatedBits, PasswordPolicy.masterMinimumBits, "Composite weak password must stay < 40 bits: \(pass)")
+            XCTAssertNotNil(
+                PasswordPolicy.validationMessage(pass, for: .master),
+                "Must reject composite weak password for master: \(pass)"
+            )
+            XCTAssertNotNil(
+                PasswordPolicy.validationMessage(pass, for: .backup),
+                "Must reject composite weak password for backup: \(pass)"
+            )
+        }
+
+        // 2. Full-width Unicode characters & normalization
+        let fullWidthWeak = ["１２３４５６７８！", "Ａｂｃ１２３４５！"]
+        for fw in fullWidthWeak {
+            XCTAssertNotNil(PasswordPolicy.validationMessage(fw, for: .master))
+            XCTAssertNotNil(PasswordPolicy.validationMessage(fw, for: .backup))
+        }
+
+        // Invisible and control character rejection
+        let hostileUnicode = [
+            "\u{200B}Password123!",   // Zero-width space
+            "\u{202E}Password123!",   // Right-to-left override
+            "Password\u{0000}123!",   // Null byte
+            "\u{FEFF}Password123!",   // Zero-width non-breaking space (BOM)
+            "Pass\u{200C}word123!"    // Zero-width non-joiner
+        ]
+        for hostile in hostileUnicode {
+            let msg = PasswordPolicy.validationMessage(hostile, for: .master)
+            XCTAssertNotNil(msg, "Should reject control/invisible character: \(hostile)")
+            XCTAssertTrue(msg?.contains("不可见") == true || msg?.contains("控制字符") == true)
+        }
+
+        // 3. Repetitive LZ77 patterns (must be discounted below entropy thresholds)
+        let repetitivePatterns = [
+            ("Ab1!Ab1!", PasswordPurpose.master, PasswordPolicy.masterMinimumBits),
+            ("Ab1!Ab1!Ab1!", PasswordPurpose.backup, PasswordPolicy.backupMinimumBits),
+            ("Q9#Q9#Q9#Q9#", PasswordPurpose.backup, PasswordPolicy.backupMinimumBits),
+            ("Test1!Test1!Test1!", PasswordPurpose.backup, PasswordPolicy.backupMinimumBits),
+            ("Aa1!Bb2@Aa1!Bb2@", PasswordPurpose.backup, PasswordPolicy.backupMinimumBits)
+        ]
+        for (pattern, purpose, minBits) in repetitivePatterns {
+            let assessment = PasswordPolicy.assess(pattern)
+            XCTAssertLessThan(assessment.estimatedBits, minBits, "Repetitive pattern \(pattern) should have bits < \(minBits), got \(assessment.estimatedBits)")
+            XCTAssertNotNil(PasswordPolicy.validationMessage(pattern, for: purpose), "Should reject repetitive pattern: \(pattern)")
+            XCTAssertTrue(assessment.warnings.contains { $0.contains("重复") || $0.contains("种类太少") })
+        }
+
+        // 4. Leet speak variations (must trigger warnings AND be rejected for both master and backup)
+        let leetVariants = ["P@ssw0rd!", "Adm1n15tr@t0r!", "W0@1n11314!"]
+        for leet in leetVariants {
+            let assessment = PasswordPolicy.assess(leet)
+            XCTAssertTrue(
+                assessment.warnings.contains { $0.contains("常见") || $0.contains("泄露") || $0.contains("字典") || $0.contains("拼音") },
+                "Leet variation \(leet) must trigger dictionary/pinyin warnings"
+            )
+            XCTAssertNotNil(PasswordPolicy.validationMessage(leet, for: .master), "Must reject leet weak password for master: \(leet)")
+            XCTAssertNotNil(PasswordPolicy.validationMessage(leet, for: .backup), "Must reject leet weak password for backup: \(leet)")
+        }
+
+        // 5. Genuine high-entropy passwords must pass cleanly
+        let strongMaster = ["mj7#Kq2!vZ", "CorrectHorse!Battery9", "Xk9$mQ2*vL4#"]
+        for strong in strongMaster {
+            XCTAssertNil(PasswordPolicy.validationMessage(strong, for: .master))
+            XCTAssertGreaterThanOrEqual(PasswordPolicy.assess(strong).estimatedBits, PasswordPolicy.masterMinimumBits)
+        }
+        let backupPassphrase = PasswordPolicy.generateRecoveryPassphrase()
+        XCTAssertNil(PasswordPolicy.validationMessage(backupPassphrase, for: .backup))
+        XCTAssertGreaterThanOrEqual(PasswordPolicy.assess(backupPassphrase).estimatedBits, PasswordPolicy.backupMinimumBits)
+
+        // 6. BankCard in-place scrub clears all sensitive fields (SEC-CRYPTO-001)
+        var cardCopy = sampleCard
+        cardCopy.pin = "849201"
+        cardCopy.notes = "Secret billing note"
+        cardCopy.scrubInPlace()
+        XCTAssertEqual(cardCopy.cardNumber, "")
+        XCTAssertEqual(cardCopy.cvv, "")
+        XCTAssertEqual(cardCopy.pin, "")
+        XCTAssertEqual(cardCopy.notes, "")
+        XCTAssertEqual(cardCopy.bankName, "")
+    }
+
+    @MainActor
+    func testAdversarialLockoutBackoffAndMonotonicDefense() {
+        // 1. Exponential backoff curve verification
+        let expectedBackoffs = [
+            (0, 0), (1, 0), (2, 0), (3, 0), (4, 0),
+            (5, 30),
+            (6, 60),
+            (7, 300),
+            (8, 900),
+            (9, 3600),
+            (10, 3600),
+            (14, 3600),
+            (15, 3600)
+        ]
+        for (failures, expectedSec) in expectedBackoffs {
+            XCTAssertEqual(
+                LockoutPolicy.lockoutSeconds(forFailures: failures),
+                expectedSec,
+                "Backoff for \(failures) failures must be \(expectedSec)s"
+            )
+        }
+
+        // 2. Monotonic clock resilience & reboot defense
+        let sec: UInt64 = 1_000_000_000
+        let startNs: UInt64 = 100 * sec
+        let duration = 300 // 5m
+
+        let record = LockoutRecord(
+            failures: 7,
+            lockStartMonotonicNs: startNs,
+            lockDurationSeconds: duration,
+            bootSession: "SESSION-A"
+        )
+
+        // Normal progression: 50s elapsed -> 250s remaining
+        let normal = LockoutPolicy.remainingSeconds(record: record, nowMonotonicNs: startNs + 50 * sec, currentBootSession: "SESSION-A")
+        XCTAssertEqual(normal.remaining, 250)
+        XCTAssertFalse(normal.needsRestart)
+
+        // Normal completion: 300s elapsed -> 0s remaining
+        let completed = LockoutPolicy.remainingSeconds(record: record, nowMonotonicNs: startNs + 300 * sec, currentBootSession: "SESSION-A")
+        XCTAssertEqual(completed.remaining, 0)
+        XCTAssertFalse(completed.needsRestart)
+
+        // Monotonic anomaly / clock rollback attempt (now < start) -> full duration restarted (fail-closed!)
+        let clockRollback = LockoutPolicy.remainingSeconds(record: record, nowMonotonicNs: startNs - 10 * sec, currentBootSession: "SESSION-A")
+        XCTAssertEqual(clockRollback.remaining, duration)
+        XCTAssertTrue(clockRollback.needsRestart, "Clock rollback must trigger fail-closed restart!")
+
+        // Device reboot (bootSession changed) -> full duration restarted
+        let reboot = LockoutPolicy.remainingSeconds(record: record, nowMonotonicNs: 10 * sec, currentBootSession: "SESSION-B")
+        XCTAssertEqual(reboot.remaining, duration)
+        XCTAssertTrue(reboot.needsRestart, "Reboot must trigger fail-closed restart of full duration!")
+
+        // 3. LockoutGuard fail-closed restart verification
+        final class MockLockoutBackend: @unchecked Sendable, KeychainStateBackend {
+            var map: [String: Data] = [:]
+            func readResult(_ a: String) -> KeychainReadResult { map[a].map(KeychainReadResult.found) ?? .notFound }
+            func write(_ d: Data, account a: String) -> Bool { map[a] = d; return true }
+            func delete(_ a: String) { map.removeValue(forKey: a) }
+        }
+        let backend = MockLockoutBackend()
+        let seedGuard = LockoutGuard(backend: backend)
+        for _ in 0..<5 { XCTAssertTrue(seedGuard.beginAttempt()) }
+        XCTAssertEqual(seedGuard.failures, 5)
+        XCTAssertGreaterThan(seedGuard.remainingSeconds(), 0)
+
+        // Simulate reboot: corrupt bootSession in authenticated Keychain record
+        if case .found(let payload) = KeychainStateAuthenticator.readAuthenticated(account: "unlock_lockout", using: backend),
+           var rec = try? JSONDecoder().decode(LockoutRecord.self, from: payload) {
+            rec.bootSession = "OLD_REBOOTED_SESSION_UUID"
+            _ = KeychainStateAuthenticator.writeAuthenticated(try! JSONEncoder().encode(rec), account: "unlock_lockout", using: backend)
+        }
+        let rebootGuard = LockoutGuard(backend: backend)
+        let remainingAfterReboot = rebootGuard.remainingSeconds()
+        XCTAssertEqual(remainingAfterReboot, 30, "Reboot must restart full 30s lockout delay!")
+    }
+
+    @MainActor
+    func testAdversarialVaultWipeOn15FailedAttempts() async throws {
+        final class MockHW: HardwareKeyProvider, @unchecked Sendable {
+            let inner = InMemoryHardwareKeyProvider()
+            var destroyed = false
+            var currentProtectionTier: HardwareProtectionTier? { inner.currentProtectionTier }
+            var hasPendingKey: Bool { inner.hasPendingKey }
+            func sealNewVaultFactor(salt: Data) throws -> (ephemeralPublicKey: Data, hardwareSecret: SymmetricKey) {
+                try inner.sealNewVaultFactor(salt: salt)
+            }
+            func sealExistingVaultFactor(salt: Data) throws -> (ephemeralPublicKey: Data, hardwareSecret: SymmetricKey) {
+                try inner.sealExistingVaultFactor(salt: salt)
+            }
+            func unsealVaultFactor(ephemeralPublicKey: Data, salt: Data) throws -> SymmetricKey {
+                try inner.unsealVaultFactor(ephemeralPublicKey: ephemeralPublicKey, salt: salt)
+            }
+            func unsealPendingVaultFactor(ephemeralPublicKey: Data, salt: Data) throws -> SymmetricKey {
+                try inner.unsealPendingVaultFactor(ephemeralPublicKey: ephemeralPublicKey, salt: salt)
+            }
+            func commitRotatedKey() { inner.commitRotatedKey() }
+            func discardPendingKey() { inner.discardPendingKey() }
+            func destroyKey() {
+                destroyed = true
+                inner.destroyKey()
+            }
+        }
+
+        final class MemoryBackend: @unchecked Sendable, KeychainStateBackend {
+            var map: [String: Data] = [:]
+            func readResult(_ a: String) -> KeychainReadResult { map[a].map(KeychainReadResult.found) ?? .notFound }
+            func write(_ d: Data, account a: String) -> Bool { map[a] = d; return true }
+            func delete(_ a: String) { map.removeValue(forKey: a) }
+        }
+
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("enkard-adv-wipe-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let tempVaultURL = tempDir.appendingPathComponent("vault.cardse")
+
+        let hw = MockHW()
+        let backend = MemoryBackend()
+        let store = VaultStore(hardwareKeys: hw, stateBackend: backend, customVaultFileURL: tempVaultURL)
+        store.bootstrapIfNeeded()
+
+        let masterPass = "Master#Pass99!Key"
+        let ok = await store.setupNewVault(masterPassword: masterPass, enableBiometrics: false, initialCards: [sampleCard])
+        XCTAssertTrue(ok)
+        store.wipeAfterFailedAttempts = true
+        store.lock(reason: .manual)
+
+        // Seed lockout record to 14 failures with expired backoff (start monotonic ns = 1)
+        let preWipeRecord = LockoutRecord(
+            failures: 14,
+            lockStartMonotonicNs: 1,
+            lockDurationSeconds: 3600,
+            bootSession: LockoutGuard.bootSession(),
+            isLockdownActive: false
+        )
+        let preWipeData = try JSONEncoder().encode(preWipeRecord)
+        XCTAssertTrue(KeychainStateAuthenticator.writeAuthenticated(preWipeData, account: "unlock_lockout", using: backend))
+
+        // Re-instantiate store so that its LockoutGuard loads the seeded 14-failure state from backend
+        let storeUnderAttack = VaultStore(hardwareKeys: hw, stateBackend: backend, customVaultFileURL: tempVaultURL)
+        storeUnderAttack.bootstrapIfNeeded()
+        storeUnderAttack.wipeAfterFailedAttempts = true
+
+        // Check pre-wipe state
+        XCTAssertEqual(storeUnderAttack.failedAttemptCount, 14)
+        XCTAssertFalse(hw.destroyed)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempVaultURL.path))
+
+        // 15th failed attempt: MUST trigger destroyVaultCompletely()!
+        let unlockedWrong = await storeUnderAttack.unlockWithMasterPassword("WrongPassword15!")
+        XCTAssertFalse(unlockedWrong)
+
+        XCTAssertTrue(hw.destroyed, "15th failed attempt MUST destroy Secure Enclave hardware key!")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempVaultURL.path), "15th failed attempt MUST delete vault file!")
+        XCTAssertEqual(storeUnderAttack.phase, .onboarding, "Store phase must return to .onboarding after crypto-shredding wipe!")
+
+        // Now test wipeAfterFailedAttempts = false preservation
+        let tempDir2 = FileManager.default.temporaryDirectory.appendingPathComponent("enkard-adv-nowipe-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir2) }
+        let tempVaultURL2 = tempDir2.appendingPathComponent("vault.cardse")
+
+        let hw2 = MockHW()
+        let backend2 = MemoryBackend()
+        let store2 = VaultStore(hardwareKeys: hw2, stateBackend: backend2, customVaultFileURL: tempVaultURL2)
+        store2.bootstrapIfNeeded()
+        let ok2 = await store2.setupNewVault(masterPassword: masterPass, enableBiometrics: false, initialCards: [sampleCard])
+        XCTAssertTrue(ok2)
+        store2.wipeAfterFailedAttempts = false
+        store2.lock(reason: .manual)
+
+        let preWipeData2 = try JSONEncoder().encode(preWipeRecord)
+        XCTAssertTrue(KeychainStateAuthenticator.writeAuthenticated(preWipeData2, account: "unlock_lockout", using: backend2))
+
+        let storeNoWipe = VaultStore(hardwareKeys: hw2, stateBackend: backend2, customVaultFileURL: tempVaultURL2)
+        storeNoWipe.bootstrapIfNeeded()
+        storeNoWipe.wipeAfterFailedAttempts = false
+
+        let unlockedWrong2 = await storeNoWipe.unlockWithMasterPassword("WrongPassword15!")
+        XCTAssertFalse(unlockedWrong2)
+        XCTAssertFalse(hw2.destroyed, "When wipeAfterFailedAttempts is false, hardware key must NOT be destroyed!")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempVaultURL2.path), "When wipeAfterFailedAttempts is false, vault file must NOT be deleted!")
+        XCTAssertEqual(storeNoWipe.failedAttemptCount, 15)
+    }
 }
+

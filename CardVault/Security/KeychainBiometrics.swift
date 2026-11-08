@@ -131,7 +131,7 @@ enum KeychainBiometrics {
         try await Task.detached(priority: .userInitiated) {
             let context = LAContext()
             context.localizedReason = reason
-            context.localizedFallbackTitle = "使用主密码"
+            context.localizedFallbackTitle = ""
 
             var authError: NSError?
             guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &authError) else {
@@ -139,14 +139,8 @@ enum KeychainBiometrics {
                 throw KeychainBiometricError.biometricsUnavailable(message)
             }
 
-            let authenticated = try await context.evaluatePolicy(
-                .deviceOwnerAuthenticationWithBiometrics,
-                localizedReason: reason
-            )
-            guard authenticated else {
-                throw KeychainBiometricError.userCancelled
-            }
-
+            // Directly let `SecItemCopyMatching` drive the hardware-gated `.biometryCurrentSet` prompt via `context`,
+            // eliminating redundant pre-evaluation double prompts and authentication-context expiry races.
             for candidateService in [service, legacyServiceV1] {
                 let query: [String: Any] = [
                     kSecClass as String: kSecClassGenericPassword,
@@ -172,7 +166,7 @@ enum KeychainBiometrics {
                     result = nil
                     defer { SecureZero.wipe(&ownedBytes) }
                     return SymmetricKey(data: ownedBytes)
-                case errSecUserCanceled, errSecAuthFailed:
+                case errSecUserCanceled, errSecAuthFailed, errSecInteractionNotAllowed:
                     throw KeychainBiometricError.userCancelled
                 case errSecItemNotFound:
                     continue

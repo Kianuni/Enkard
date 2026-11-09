@@ -59,3 +59,11 @@ chmod +x scripts/build_ipa.sh scripts/verify_signed_ipa.sh
 
 - **从 CardSe 无缝升级**：`v2.2.0` 起应用更名为 **Enkard**，Bundle ID（`com.local.cardse.app`）与底层加密存储保持兼容，使用同一证书直接覆盖安装即可无缝保留全部卡片；旧版 `.cardse` / `.cardvault` 备份亦可直接导入。
 - **切勿关闭手机锁屏密码**：硬件密钥绑定 iPhone 锁屏密码（`WhenPasscodeSetThisDeviceOnly`），关闭系统锁屏密码会导致安全芯片永久清除密钥（重置密码或换机前请先导出 `.enkard` 离线备份）。
+
+---
+
+## 开源协议与免责声明
+
+本项目基于 **[GNU General Public License v3.0 (GPL-3.0)](LICENSE)** 协议开源：允许个人免费学习、审计、构建与自用，任何基于本项目的修改或再分发衍生作品必须同样以 `GPL-3.0` 协议完整开源，禁止闭源商业套壳分发。
+
+> **免责声明**：本软件按“原样（AS IS）”提供，不附带任何明示或暗示担保。Enkard 无任何后端服务器与密码找回机制，请务必妥善牢记主密码并定期保存离线加密备份，因遗忘主密码、关闭系统锁屏密码或设备损坏导致的数据不可恢复由使用者自行承担。

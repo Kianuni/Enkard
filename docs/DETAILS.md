@@ -2,7 +2,7 @@
 
 [← 返回项目主页 (README.md)](../README.md)
 
-**Enkard**（v2.3.2）是一款专为 iPhone 本地自签场景设计的**纯离线、零云同步、绑定 Apple Secure Enclave 安全芯片**的原生银行卡保险库。本文档详细介绍 Enkard 的产品设计理念、日常管理功能、六层纵深安全架构以及平台物理边界。
+**Enkard**（v2.3.3）是一款专为 iPhone 本地自签场景设计的**纯离线、零云同步、绑定 Apple Secure Enclave 安全芯片**的原生银行卡保险库。本文档详细介绍 Enkard 的产品设计理念、日常管理功能、六层纵深安全架构以及平台物理边界。
 
 ---
 
@@ -84,6 +84,7 @@ flowchart TD
   3. **零跨设备接力与通用剪贴板**：显式拒绝 `NSUserActivity` 接力，剪贴板恒定 `localOnly = true`；
   4. **零第三方键盘与扩展注入**：`AppDelegate` 全局返回 `shouldAllowExtensionPointIdentifier -> false`，彻底阻断第三方输入法与系统扩展挂载；
   5. **零 AI 文本外发与词库残留**：关闭拼写检查、自动纠错、键盘词库学习，并显式禁用 iOS 18+ **Apple Intelligence 写作工具**（`.writingToolsBehavior(.disabled)`）。
+- **POSIX 沙盒反软链接与反稀疏炸弹文件护栏（`SafeVaultFileIO`）**：内部密文库读写、原子落盘与销毁全链路采用 `lstat` + `O_DIRECTORY | O_NOFOLLOW` 目录描述符锚定（`fstatat(AT_SYMLINK_NOFOLLOW)` / `openat(O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)` / `renameat` / `unlinkat`）及 **40 MB 硬性体积上限**，在保留 `NSFileProtectionComplete` 锁屏密钥驱逐保护语义的同时，彻底阻断跨沙盒守护进程漏洞（如 `containermanagerd` 混淆代理人）植入软链接越界读写、FIFO 命名管道挂起与超大稀疏文件内存耗尽攻击。
 
 ### 第 2 层：Secure Enclave 硬件双因子信封加密
 - **双因子密钥派生（`CARDSE_LOCAL_VAULT_V2`）**：

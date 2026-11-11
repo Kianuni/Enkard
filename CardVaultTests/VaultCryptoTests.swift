@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import XCTest
 @testable import Enkard
 
@@ -1190,6 +1191,211 @@ final class VaultCryptoTests: XCTestCase {
         XCTAssertFalse(hw2.destroyed, "When wipeAfterFailedAttempts is false, hardware key must NOT be destroyed!")
         XCTAssertTrue(FileManager.default.fileExists(atPath: tempVaultURL2.path), "When wipeAfterFailedAttempts is false, vault file must NOT be deleted!")
         XCTAssertEqual(storeNoWipe.failedAttemptCount, 15)
+    }
+
+    @MainActor
+    func testWorseQuerySymlinkFifoAndSparseBombDefense() async throws {
+        final class MemoryBackend: @unchecked Sendable, KeychainStateBackend {
+            var map: [String: Data] = [:]
+            func readResult(_ a: String) -> KeychainReadResult { map[a].map(KeychainReadResult.found) ?? .notFound }
+            func write(_ d: Data, account a: String) -> Bool { map[a] = d; return true }
+            func delete(_ a: String) { map.removeValue(forKey: a) }
+        }
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("enkard-wqguard-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // 1. Leaf symlink at `vault.cardse` -> blocked on read, blocked on setup overwrite, and external canary untouched on shred!
+        let externalCanaryURL = root.appendingPathComponent("external_canary.txt")
+        let canaryPayload = Data("SENSITIVE_EXTERNAL_CANARY_DO_NOT_TOUCH".utf8)
+        try canaryPayload.write(to: externalCanaryURL)
+
+        let dir1 = root.appendingPathComponent("case1-leaf-symlink", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir1, withIntermediateDirectories: true)
+        let vault1URL = dir1.appendingPathComponent("vault.cardse")
+        XCTAssertEqual(Darwin.symlink(externalCanaryURL.path, vault1URL.path), 0)
+
+        let store1 = VaultStore(
+            hardwareKeys: InMemoryHardwareKeyProvider(),
+            stateBackend: MemoryBackend(),
+            customVaultFileURL: vault1URL
+        )
+        store1.bootstrapIfNeeded()
+        XCTAssertEqual(store1.phase, .locked, "Symlink at vault.cardse must fail-closed to .locked, never .onboarding!")
+        XCTAssertNotNil(store1.securityNotice)
+        XCTAssertNotNil(store1.errorMessage)
+
+        let setupOverSymlink = await store1.setupNewVault(
+            masterPassword: "Master#Pass99!Key",
+            enableBiometrics: false,
+            initialCards: [sampleCard]
+        )
+        XCTAssertFalse(setupOverSymlink)
+        XCTAssertEqual(try Data(contentsOf: externalCanaryURL), canaryPayload)
+
+        store1.destroyVaultCompletely()
+        var lst = stat()
+        XCTAssertNotEqual(Darwin.lstat(vault1URL.path, &lst), 0, "Planted symlink itself must be unlinked")
+        XCTAssertEqual(
+            try Data(contentsOf: externalCanaryURL),
+            canaryPayload,
+            "destroyVaultCompletely() must NEVER zero-overwrite or delete the external target of a planted symlink!"
+        )
+
+        // 2. Dangling symlink at `vault.cardse` (where FileManager.fileExists returns false!) -> must STILL block setupNewVault!
+        let dir2 = root.appendingPathComponent("case2-dangling-symlink", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir2, withIntermediateDirectories: true)
+        let danglingTargetURL = root.appendingPathComponent("dangling_created_outside_sandbox.bin")
+        let vault2URL = dir2.appendingPathComponent("vault.cardse")
+
+        let store2 = VaultStore(
+            hardwareKeys: InMemoryHardwareKeyProvider(),
+            stateBackend: MemoryBackend(),
+            customVaultFileURL: vault2URL
+        )
+        store2.bootstrapIfNeeded()
+        XCTAssertEqual(store2.phase, .onboarding)
+
+        // Attacker plants dangling symlink while user is on the onboarding screen
+        XCTAssertEqual(Darwin.symlink(danglingTargetURL.path, vault2URL.path), 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: vault2URL.path), "Sanity check: FileManager.fileExists misses dangling symlinks")
+
+        let createdOverDangling = await store2.setupNewVault(
+            masterPassword: "Master#Pass99!Key",
+            enableBiometrics: false,
+            initialCards: [sampleCard]
+        )
+        XCTAssertFalse(createdOverDangling, "Dangling symlink at vault.cardse must block setupNewVault!")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: danglingTargetURL.path))
+
+        // 3. Storage directory (`CardSeStorage`) replaced with a symlink to an external directory
+        let externalDir = root.appendingPathComponent("external_victim_dir", isDirectory: true)
+        try FileManager.default.createDirectory(at: externalDir, withIntermediateDirectories: true)
+        let externalDirCanaryURL = externalDir.appendingPathComponent("vault.cardse")
+        let dirCanaryBytes = Data("EXTERNAL_FOLDER_CANARY".utf8)
+        try dirCanaryBytes.write(to: externalDirCanaryURL)
+
+        let symlinkedStorageDir = root.appendingPathComponent("CardSeStorageSymlink")
+        XCTAssertEqual(Darwin.symlink(externalDir.path, symlinkedStorageDir.path), 0)
+        let vault3URL = symlinkedStorageDir.appendingPathComponent("vault.cardse")
+
+        let store3 = VaultStore(
+            hardwareKeys: InMemoryHardwareKeyProvider(),
+            stateBackend: MemoryBackend(),
+            customVaultFileURL: vault3URL
+        )
+        store3.bootstrapIfNeeded()
+        XCTAssertEqual(store3.phase, .locked)
+        XCTAssertNotNil(store3.securityNotice)
+
+        let writeIntoSymlinkDir = await store3.setupNewVault(
+            masterPassword: "Master#Pass99!Key",
+            enableBiometrics: false,
+            initialCards: [sampleCard]
+        )
+        XCTAssertFalse(writeIntoSymlinkDir)
+        XCTAssertEqual(try Data(contentsOf: externalDirCanaryURL), dirCanaryBytes)
+
+        store3.destroyVaultCompletely()
+        XCTAssertNotEqual(Darwin.lstat(symlinkedStorageDir.path, &lst), 0, "Storage-dir symlink itself should be unlinked")
+        XCTAssertEqual(
+            try Data(contentsOf: externalDirCanaryURL),
+            dirCanaryBytes,
+            "destroyVaultCompletely() must NEVER traverse a symlinked storage directory to zero/delete external files!"
+        )
+
+        // 4. Named pipe (`mkfifo` / S_IFIFO) -> must reject non-blocking in < 0.1s without hanging!
+        let dir4 = root.appendingPathComponent("case4-fifo", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir4, withIntermediateDirectories: true)
+        let fifoURL = dir4.appendingPathComponent("vault.cardse")
+        XCTAssertEqual(Darwin.mkfifo(fifoURL.path, 0o600), 0)
+
+        let fifoStart = Date()
+        let store4 = VaultStore(
+            hardwareKeys: InMemoryHardwareKeyProvider(),
+            stateBackend: MemoryBackend(),
+            customVaultFileURL: fifoURL
+        )
+        store4.bootstrapIfNeeded()
+        XCTAssertLessThan(Date().timeIntervalSince(fifoStart), 0.2, "FIFO must be rejected non-blockingly!")
+        XCTAssertEqual(store4.phase, .locked)
+        XCTAssertNotNil(store4.securityNotice)
+        XCTAssertThrowsError(try VaultCrypto.readBackupFileBounded(at: fifoURL)) {
+            XCTAssertEqual($0 as? VaultCryptoError, .invalidEnvelopeFormat)
+        }
+
+        // 5. 512 MB sparse-file OOM bomb (`ftruncate` >> 40 MB cap) -> rejected in O(1) memory & < 0.1s!
+        let dir5 = root.appendingPathComponent("case5-sparse", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir5, withIntermediateDirectories: true)
+        let sparseURL = dir5.appendingPathComponent("vault.cardse")
+        let sparseFD = Darwin.open(sparseURL.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        XCTAssertGreaterThanOrEqual(sparseFD, 0)
+        XCTAssertEqual(Darwin.ftruncate(sparseFD, off_t(512 * 1024 * 1024)), 0)
+        _ = Darwin.close(sparseFD)
+
+        let sparseStart = Date()
+        let store5 = VaultStore(
+            hardwareKeys: InMemoryHardwareKeyProvider(),
+            stateBackend: MemoryBackend(),
+            customVaultFileURL: sparseURL
+        )
+        store5.bootstrapIfNeeded()
+        XCTAssertLessThan(Date().timeIntervalSince(sparseStart), 0.2)
+        XCTAssertEqual(store5.phase, .locked)
+        XCTAssertNotNil(store5.securityNotice)
+        XCTAssertThrowsError(try VaultCrypto.readBackupFileBounded(at: sparseURL)) {
+            XCTAssertEqual($0 as? VaultCryptoError, .invalidEnvelopeFormat)
+        }
+
+        // 6. Symlink `.enkard` backup file rejected by `VaultCrypto.readBackupFileBounded(at:)`
+        let backupPass = PasswordPolicy.generateRecoveryPassphrase()
+        let validBackup = try VaultCrypto.exportEncryptedBackup(
+            cards: [sampleCard],
+            backupPassword: backupPass,
+            iterations: iterations
+        )
+        let realBackupURL = root.appendingPathComponent("backup.enkard")
+        try validBackup.write(to: realBackupURL)
+        let symlinkBackupURL = root.appendingPathComponent("symlink.enkard")
+        XCTAssertEqual(Darwin.symlink(realBackupURL.path, symlinkBackupURL.path), 0)
+
+        XCTAssertEqual(try VaultCrypto.readBackupFileBounded(at: realBackupURL), validBackup)
+        XCTAssertThrowsError(try VaultCrypto.readBackupFileBounded(at: symlinkBackupURL)) {
+            XCTAssertEqual($0 as? VaultCryptoError, .invalidEnvelopeFormat)
+        }
+
+        // 7. Mid-session symlink swap while unlocked -> `addCard` (`persistEnvelope`) must throw `.storageTampered` without touching canary!
+        let dir7 = root.appendingPathComponent("case7-live-swap", isDirectory: true)
+        let vault7URL = dir7.appendingPathComponent("vault.cardse")
+        let store7 = VaultStore(
+            hardwareKeys: InMemoryHardwareKeyProvider(),
+            stateBackend: MemoryBackend(),
+            customVaultFileURL: vault7URL
+        )
+        store7.bootstrapIfNeeded()
+        let ok7 = await store7.setupNewVault(
+            masterPassword: "Master#Pass99!Key",
+            enableBiometrics: false,
+            initialCards: []
+        )
+        XCTAssertTrue(ok7)
+        XCTAssertEqual(store7.phase, .unlocked)
+
+        XCTAssertEqual(Darwin.unlink(vault7URL.path), 0)
+        XCTAssertEqual(Darwin.symlink(externalCanaryURL.path, vault7URL.path), 0)
+
+        XCTAssertThrowsError(try store7.addCard(sampleCard)) { err in
+            guard case .storageTampered? = err as? VaultCryptoError else {
+                XCTFail("Expected VaultCryptoError.storageTampered, got \(err)")
+                return
+            }
+        }
+        XCTAssertEqual(
+            try Data(contentsOf: externalCanaryURL),
+            canaryPayload,
+            "Mid-session persistEnvelope must NEVER overwrite an external symlink target!"
+        )
     }
 }
 

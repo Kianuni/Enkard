@@ -168,13 +168,18 @@ final class VaultStore: ObservableObject {
         loadVaultStateFromDisk()
     }
 
+    private var verifiedAncestorDirectories: [URL] {
+        guard customVaultFileURL == nil else { return [] }
+        let libraryDir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return [libraryDir, supportDir]
+    }
+
     private func refreshStorageDirectoryProtection() {
-        let folder = storageDirectoryURL
-        try? FileManager.default.setAttributes(
-            [.protectionKey: FileProtectionType.complete],
-            ofItemAtPath: folder.path
+        try? SafeVaultFileIO.ensureSafeDirectory(
+            at: storageDirectoryURL,
+            ancestorDirectoriesToVerify: verifiedAncestorDirectories
         )
-        excludeFromAllBackups(folder)
     }
 
     private func savePreferences() {
@@ -191,60 +196,29 @@ final class VaultStore: ObservableObject {
 
     var storageDirectoryURL: URL {
         if let customVaultFileURL {
-            let folder = customVaultFileURL.deletingLastPathComponent()
-            if !FileManager.default.fileExists(atPath: folder.path) {
-                try? FileManager.default.createDirectory(
-                    at: folder,
-                    withIntermediateDirectories: true,
-                    attributes: [.protectionKey: FileProtectionType.complete]
-                )
-                excludeFromAllBackups(folder)
-            }
-            return folder
+            return customVaultFileURL.deletingLastPathComponent()
         }
         let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let folder = supportDir.appendingPathComponent("CardSeStorage", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: folder.path) {
-            try? FileManager.default.createDirectory(
-                at: folder,
-                withIntermediateDirectories: true,
-                attributes: [.protectionKey: FileProtectionType.complete]
-            )
-            excludeFromAllBackups(folder)
-        }
-        return folder
+        return supportDir.appendingPathComponent("CardSeStorage", isDirectory: true)
     }
 
     var vaultFileURL: URL {
         if let customVaultFileURL {
-            _ = storageDirectoryURL
             return customVaultFileURL
         }
         return storageDirectoryURL.appendingPathComponent("vault.cardse", isDirectory: false)
     }
 
     private func migrateLegacyStorageDirectoryIfNeeded() {
+        guard customVaultFileURL == nil else { return }
         let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let legacyFolder = supportDir.appendingPathComponent("CardVaultStorage", isDirectory: true)
-        let legacyFile = legacyFolder.appendingPathComponent("vault.cardvault", isDirectory: false)
-        let targetFile = vaultFileURL
-
-        if FileManager.default.fileExists(atPath: legacyFile.path),
-           !FileManager.default.fileExists(atPath: targetFile.path) {
-            try? FileManager.default.moveItem(at: legacyFile, to: targetFile)
-            excludeFromAllBackups(targetFile)
-        }
-        if FileManager.default.fileExists(atPath: legacyFolder.path),
-           !FileManager.default.fileExists(atPath: legacyFile.path) {
-            try? FileManager.default.removeItem(at: legacyFolder)
-        }
-    }
-
-    private func excludeFromAllBackups(_ url: URL) {
-        var resourceValues = URLResourceValues()
-        resourceValues.isExcludedFromBackup = true
-        var mutableURL = url
-        try? mutableURL.setResourceValues(resourceValues)
+        SafeVaultFileIO.migrateLegacyVaultIfPresent(
+            legacyFolderURL: legacyFolder,
+            legacyFileName: "vault.cardvault",
+            targetFileURL: vaultFileURL,
+            ancestorDirectoriesToVerify: verifiedAncestorDirectories
+        )
     }
 
     var biometricKind: BiometricKind {
@@ -288,10 +262,12 @@ final class VaultStore: ObservableObject {
     }
 
     func loadVaultStateFromDisk() {
-        let url = vaultFileURL
-        let fileExists = FileManager.default.fileExists(atPath: url.path)
-
-        guard fileExists else {
+        let data: Data
+        switch SafeVaultFileIO.readLocalVaultFile(
+            at: vaultFileURL,
+            ancestorDirectoriesToVerify: verifiedAncestorDirectories
+        ) {
+        case .notFound:
             // Distinguish genuine first install from unexpected disappearance of an existing vault!
             let identityState = VaultIdentityStore.readState(using: stateBackend)
             switch identityState {
@@ -311,15 +287,26 @@ final class VaultStore: ObservableObject {
             needsReloadWhenProtectedDataAvailable = false
             wipeSensitiveMemory()
             return
-        }
 
-        // File exists on disk: NEVER enter `.onboarding` if NSFileProtectionComplete blocks reading while locked!
-        guard let data = try? Data(contentsOf: url) else {
+        case .protectedDataUnavailable:
+            // File exists on disk: NEVER enter `.onboarding` if NSFileProtectionComplete blocks reading while locked!
             phase = .locked
             currentEnvelope = nil
             needsReloadWhenProtectedDataAvailable = true
             wipeSensitiveMemory()
             return
+
+        case .tampered(let reason):
+            currentEnvelope = nil
+            needsReloadWhenProtectedDataAvailable = false
+            phase = .locked
+            errorMessage = reason
+            securityNotice = reason
+            wipeSensitiveMemory()
+            return
+
+        case .data(let loaded):
+            data = loaded
         }
 
         needsReloadWhenProtectedDataAvailable = false
@@ -369,9 +356,24 @@ final class VaultStore: ObservableObject {
         initialCards: [BankCard],
         startedEpoch: UInt64
     ) async -> Bool {
-        // Hard overwrite guard: NEVER rotate Secure Enclave keys or overwrite an existing vault file on disk.
-        if FileManager.default.fileExists(atPath: vaultFileURL.path) {
+        // Hard overwrite & non-symlink guard: NEVER rotate Secure Enclave keys or write through a planted symlink!
+        switch SafeVaultFileIO.inspectExistingVaultNode(
+            at: vaultFileURL,
+            ancestorDirectoriesToVerify: verifiedAncestorDirectories
+        ) {
+        case .absent:
+            break
+        case .regularFileExists:
             errorMessage = "检测到本机已存在加密卡包文件，已拒绝覆盖初始化。请先解锁现有卡包。"
+            loadVaultStateFromDisk()
+            return false
+        case .protectedDataUnavailable:
+            errorMessage = "本机受保护存储暂不可访问，请确认设备处于解锁状态后再试。"
+            loadVaultStateFromDisk()
+            return false
+        case .tampered(let reason):
+            errorMessage = reason
+            securityNotice = reason
             loadVaultStateFromDisk()
             return false
         }
@@ -1309,14 +1311,11 @@ final class VaultStore: ObservableObject {
         lockout.reset()
         KeychainStateAuthenticator.clearKey(using: stateBackend)
 
-        let url = vaultFileURL
-        if let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int, size > 0 {
-            // Best-effort zero overwrite before unlink (primary guarantee on CoW APFS is Secure Enclave key destruction above).
-            let zeroes = Data(count: min(size, 1024 * 1024))
-            try? zeroes.write(to: url, options: [.completeFileProtection])
-        }
-        try? FileManager.default.removeItem(at: url)
-        try? FileManager.default.removeItem(at: storageDirectoryURL)
+        SafeVaultFileIO.shredAndRemoveLocalVault(
+            fileURL: vaultFileURL,
+            storageDirectoryURL: storageDirectoryURL,
+            ancestorDirectoriesToVerify: verifiedAncestorDirectories
+        )
 
         wipeSensitiveMemory()
         currentEnvelope = nil
@@ -1468,9 +1467,11 @@ final class VaultStore: ObservableObject {
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(envelope)
 
-        let url = vaultFileURL
-        try data.write(to: url, options: [.atomic, .completeFileProtection])
-        excludeFromAllBackups(url)
+        try SafeVaultFileIO.writeLocalVaultFileAtomically(
+            data,
+            to: vaultFileURL,
+            ancestorDirectoriesToVerify: verifiedAncestorDirectories
+        )
     }
 
     /// Releases decrypted state and scrubs inline SSO slots before freeing buffer capacity.

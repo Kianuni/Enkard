@@ -237,7 +237,7 @@ struct SecuritySettingsView: View {
                         pendingImportData = try VaultCrypto.readBackupFileBounded(at: url)
                         showingImportSheet = true
                     } catch {
-                        store.errorMessage = "备份文件无效或超过 \(VaultCrypto.maximumBackupFileByteCount / 1024 / 1024) MB 安全上限"
+                        store.errorMessage = "备份文件无效、包含异常软链接或超过 \(VaultCrypto.maximumBackupFileByteCount / 1024 / 1024) MB 安全上限"
                     }
                 case .failure(let error):
                     store.errorMessage = error.localizedDescription

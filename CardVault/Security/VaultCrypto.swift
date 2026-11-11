@@ -14,6 +14,7 @@ enum VaultCryptoError: LocalizedError, Equatable {
     case invalidEnvelopeFormat
     case domainMismatch
     case hardwareKeyUnavailable(String)
+    case storageTampered(String)
     case authenticationFailed
     case corruptedPayload
 
@@ -36,6 +37,8 @@ enum VaultCryptoError: LocalizedError, Equatable {
         case .domainMismatch:
             return "文件用途不匹配：本地硬件绑定库与跨设备备份文件禁止混用"
         case .hardwareKeyUnavailable(let reason):
+            return reason
+        case .storageTampered(let reason):
             return reason
         case .authenticationFailed:
             return "密码错误，或加密数据已被篡改"
@@ -97,21 +100,40 @@ enum VaultCrypto {
     private static let maximumPayloadByteCount = 20 * 1024 * 1024
     /// Upper bound for a user-picked backup file (checked BEFORE the file is loaded into memory).
     static let maximumBackupFileByteCount = 2 * maximumPayloadByteCount
+    /// Upper bound for the internal `vault.cardse` file (blocks sparse-file OOM bombs from sandbox tampering).
+    static let maximumVaultFileByteCount = 2 * maximumPayloadByteCount
 
-    /// Reads a user-selected backup file with a hard size cap enforced both via file metadata and
-    /// a bounded read (TOCTOU-safe), so a huge or endlessly-growing file cannot exhaust memory.
+    /// Reads a user-selected backup file with strict POSIX non-symlink (`lstat` + `O_NOFOLLOW`),
+    /// regular-file (`S_IFREG` + `O_NONBLOCK`), inode-identity, and hard byte-size bounds,
+    /// blocking symlink traversal, FIFO hangs, and sparse-file OOM bombs before allocating memory.
     static func readBackupFileBounded(at url: URL) throws -> Data {
-        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-           size > maximumBackupFileByteCount {
+        let path = url.path
+        var lst = stat()
+        guard Darwin.lstat(path, &lst) == 0 else {
             throw VaultCryptoError.invalidEnvelopeFormat
         }
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        let data = try handle.read(upToCount: maximumBackupFileByteCount + 1) ?? Data()
-        guard !data.isEmpty, data.count <= maximumBackupFileByteCount else {
+        guard (lst.st_mode & S_IFMT) == S_IFREG,
+              lst.st_size > 0,
+              lst.st_size <= off_t(maximumBackupFileByteCount) else {
             throw VaultCryptoError.invalidEnvelopeFormat
         }
-        return data
+
+        let fd = Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard fd >= 0 else {
+            throw VaultCryptoError.invalidEnvelopeFormat
+        }
+        defer { _ = Darwin.close(fd) }
+
+        switch SafeVaultFileIO.readBoundedFromRegularFD(
+            fd: fd,
+            expectedStat: lst,
+            maxBytes: maximumBackupFileByteCount
+        ) {
+        case .data(let data):
+            return data
+        case .protectedDataUnavailable, .tampered, .invalidSize:
+            throw VaultCryptoError.invalidEnvelopeFormat
+        }
     }
     private static let legacyPayloadAADV1 = Data("CARDVAULT_PAYLOAD_AAD_V1".utf8)
     private static let kekCombineInfoV2 = Data("CARDSE_DUAL_KEK_COMBINE_V2".utf8)
@@ -1057,5 +1079,617 @@ enum VaultCrypto {
             throw VaultCryptoError.corruptedPayload
         }
         return decoded
+    }
+}
+
+/// POSIX-hardened filesystem boundary for Enkard's internal container storage (`CardSeStorage` / `vault.cardse`).
+/// Defends against cross-container sandbox-token abuse (e.g. `containermanagerd` symlink injection, FIFO blocking
+/// pipes, directory-swap TOCTOU races, and multi-GB sparse-file OOM bombs) while preserving iOS `NSFileProtectionComplete`
+/// lock-screen semantics (`EPERM` / `EACCES` when Class A keys are evicted).
+enum SafeVaultFileIO {
+    enum LocalVaultReadResult: Equatable {
+        case notFound
+        case protectedDataUnavailable
+        case tampered(String)
+        case data(Data)
+    }
+
+    enum ExistingVaultNodeStatus: Equatable {
+        case absent
+        case regularFileExists
+        case protectedDataUnavailable
+        case tampered(String)
+    }
+
+    enum BoundedFDReadResult {
+        case data(Data)
+        case protectedDataUnavailable
+        case tampered
+        case invalidSize
+    }
+
+    private static func isValidSinglePathComponent(_ name: String) -> Bool {
+        !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.contains("\0")
+    }
+
+    static func excludeFromAllBackupsIfNonSymlink(_ url: URL) {
+        var st = stat()
+        guard Darwin.lstat(url.path, &st) == 0,
+              (st.st_mode & S_IFMT) != S_IFLNK else {
+            return
+        }
+        var resourceValues = URLResourceValues()
+        resourceValues.isExcludedFromBackup = true
+        var mutableURL = url
+        try? mutableURL.setResourceValues(resourceValues)
+    }
+
+    static func readBoundedFromRegularFD(
+        fd: Int32,
+        expectedStat: stat,
+        maxBytes: Int
+    ) -> BoundedFDReadResult {
+        var fst = stat()
+        guard Darwin.fstat(fd, &fst) == 0 else {
+            let err = errno
+            if err == EPERM || err == EACCES {
+                return .protectedDataUnavailable
+            }
+            return .tampered
+        }
+        guard (fst.st_mode & S_IFMT) == S_IFREG,
+              fst.st_dev == expectedStat.st_dev,
+              fst.st_ino == expectedStat.st_ino else {
+            return .tampered
+        }
+        guard fst.st_size > 0, fst.st_size <= off_t(maxBytes) else {
+            return .invalidSize
+        }
+
+        var data = Data()
+        data.reserveCapacity(Int(fst.st_size))
+        var chunk = [UInt8](repeating: 0, count: 65_536)
+
+        while true {
+            let bytesRead = Darwin.read(fd, &chunk, chunk.count)
+            if bytesRead < 0 {
+                let err = errno
+                if err == EINTR { continue }
+                if err == EPERM || err == EACCES {
+                    SecureZero.wipe(&data)
+                    return .protectedDataUnavailable
+                }
+                SecureZero.wipe(&data)
+                return .tampered
+            }
+            if bytesRead == 0 {
+                break
+            }
+            data.append(chunk, count: bytesRead)
+            if data.count > maxBytes {
+                SecureZero.wipe(&data)
+                return .invalidSize
+            }
+        }
+
+        guard !data.isEmpty, data.count <= maxBytes else {
+            return .invalidSize
+        }
+        return .data(data)
+    }
+
+    /// Ensures `directoryURL` and any verified container ancestors are genuine directories (`S_IFDIR`, never `S_IFLNK`),
+    /// creating missing directories with `FileProtectionType.complete` and backup exclusion.
+    static func ensureSafeDirectory(
+        at directoryURL: URL,
+        ancestorDirectoriesToVerify: [URL]
+    ) throws {
+        for ancestor in ancestorDirectoriesToVerify {
+            var ast = stat()
+            if Darwin.lstat(ancestor.path, &ast) == 0 {
+                let mode = ast.st_mode & S_IFMT
+                if mode == S_IFLNK {
+                    throw VaultCryptoError.storageTampered("安全告警：检测到沙盒存储父目录被植入软链接（Symlink），疑似越界篡改，已立即拒绝访问！")
+                }
+                if mode != S_IFDIR {
+                    throw VaultCryptoError.storageTampered("安全告警：沙盒存储父路径不是合法目录，已立即阻断访问！")
+                }
+            } else if errno == ENOENT {
+                try FileManager.default.createDirectory(at: ancestor, withIntermediateDirectories: true)
+                guard Darwin.lstat(ancestor.path, &ast) == 0,
+                      (ast.st_mode & S_IFMT) == S_IFDIR else {
+                    throw VaultCryptoError.storageTampered("安全告警：沙盒父目录创建后校验异常，已立即阻断访问！")
+                }
+            } else {
+                let err = errno
+                throw VaultCryptoError.hardwareKeyUnavailable("沙盒存储父目录暂不可访问（POSIX errno \(err)），请确认设备处于解锁状态")
+            }
+        }
+
+        let parentURL = directoryURL.deletingLastPathComponent()
+        var pst = stat()
+        if Darwin.lstat(parentURL.path, &pst) == 0, (pst.st_mode & S_IFMT) != S_IFDIR {
+            throw VaultCryptoError.storageTampered("安全告警：检测到加密存储上级路径被替换为软链接或非目录节点，已拒绝访问！")
+        }
+
+        var dst = stat()
+        if Darwin.lstat(directoryURL.path, &dst) == 0 {
+            let mode = dst.st_mode & S_IFMT
+            if mode == S_IFLNK {
+                throw VaultCryptoError.storageTampered("安全告警：检测到加密存储目录被替换为软链接（Symlink），疑似沙盒越界篡改，已立即拒绝访问！")
+            }
+            if mode != S_IFDIR {
+                throw VaultCryptoError.storageTampered("安全告警：加密存储路径不是合法目录（检测到异常特殊节点），已拒绝访问！")
+            }
+        } else if errno == ENOENT {
+            try FileManager.default.createDirectory(
+                at: directoryURL,
+                withIntermediateDirectories: true,
+                attributes: [.protectionKey: FileProtectionType.complete]
+            )
+            guard Darwin.lstat(directoryURL.path, &dst) == 0,
+                  (dst.st_mode & S_IFMT) == S_IFDIR else {
+                throw VaultCryptoError.storageTampered("安全告警：加密存储目录创建后元数据校验失败，已立即阻断！")
+            }
+        } else {
+            let err = errno
+            throw VaultCryptoError.hardwareKeyUnavailable("加密存储目录暂不可访问（POSIX errno \(err)），请确认设备处于解锁状态")
+        }
+
+        let dirFD = Darwin.open(directoryURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard dirFD >= 0 else {
+            let err = errno
+            if err == ELOOP || err == ENOTDIR {
+                throw VaultCryptoError.storageTampered("安全告警：检测到加密存储目录软链接或类型异常，已拒绝访问！")
+            }
+            throw VaultCryptoError.hardwareKeyUnavailable("加密存储目录暂不可打开（POSIX errno \(err)），请确认设备处于解锁状态")
+        }
+        defer { _ = Darwin.close(dirFD) }
+
+        var fst = stat()
+        guard Darwin.fstat(dirFD, &fst) == 0,
+              (fst.st_mode & S_IFMT) == S_IFDIR,
+              fst.st_dev == dst.st_dev,
+              fst.st_ino == dst.st_ino else {
+            throw VaultCryptoError.storageTampered("安全告警：检测到加密存储目录并发替换异常，已阻断访问！")
+        }
+
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.complete],
+            ofItemAtPath: directoryURL.path
+        )
+        excludeFromAllBackupsIfNonSymlink(directoryURL)
+    }
+
+    /// Inspects whether `fileURL` exists without dereferencing symlinks (`lstat` / `fstatat(AT_SYMLINK_NOFOLLOW)`),
+    /// catching even dangling symlinks that `FileManager.fileExists(atPath:)` would miss.
+    static func inspectExistingVaultNode(
+        at fileURL: URL,
+        ancestorDirectoriesToVerify: [URL]
+    ) -> ExistingVaultNodeStatus {
+        let fileName = fileURL.lastPathComponent
+        guard isValidSinglePathComponent(fileName) else {
+            return .tampered("安全告警：加密库文件名非法，已阻断操作！")
+        }
+
+        for ancestor in ancestorDirectoriesToVerify {
+            var ast = stat()
+            if Darwin.lstat(ancestor.path, &ast) != 0 {
+                let err = errno
+                if err == ENOENT { continue }
+                if err == EPERM || err == EACCES { return .protectedDataUnavailable }
+                return .tampered("安全告警：沙盒存储父目录元数据异常（POSIX errno \(err)），已阻断初始化！")
+            }
+            let mode = ast.st_mode & S_IFMT
+            if mode == S_IFLNK {
+                return .tampered("安全告警：检测到沙盒存储父目录被植入软链接（Symlink），已拒绝初始化写入！")
+            }
+            if mode != S_IFDIR {
+                return .tampered("安全告警：沙盒存储父路径不是合法目录，已拒绝初始化写入！")
+            }
+        }
+
+        let storageDirURL = fileURL.deletingLastPathComponent()
+        var dst = stat()
+        if Darwin.lstat(storageDirURL.path, &dst) != 0 {
+            let err = errno
+            if err == ENOENT {
+                let parentURL = storageDirURL.deletingLastPathComponent()
+                var pst = stat()
+                if Darwin.lstat(parentURL.path, &pst) == 0, (pst.st_mode & S_IFMT) != S_IFDIR {
+                    return .tampered("安全告警：检测到加密存储上级路径为软链接或非目录节点，已拒绝初始化写入！")
+                }
+                return .absent
+            }
+            if err == EPERM || err == EACCES {
+                return .protectedDataUnavailable
+            }
+            return .tampered("安全告警：加密存储目录状态异常（POSIX errno \(err)），已阻断初始化！")
+        }
+
+        let dirMode = dst.st_mode & S_IFMT
+        if dirMode == S_IFLNK {
+            return .tampered("安全告警：检测到加密存储目录被替换为软链接（Symlink），疑似沙盒越界篡改，已立即拒绝访问！")
+        }
+        if dirMode != S_IFDIR {
+            return .tampered("安全告警：加密存储路径不是合法目录（检测到异常特殊节点），已拒绝访问！")
+        }
+
+        let dirFD = Darwin.open(storageDirURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard dirFD >= 0 else {
+            let err = errno
+            if err == ENOENT { return .absent }
+            if err == EPERM || err == EACCES { return .protectedDataUnavailable }
+            return .tampered("安全告警：检测到加密存储目录软链接或访问异常，已拒绝初始化写入！")
+        }
+        defer { _ = Darwin.close(dirFD) }
+
+        var leafSt = stat()
+        if Darwin.fstatat(dirFD, fileName, &leafSt, AT_SYMLINK_NOFOLLOW) != 0 {
+            let err = errno
+            if err == ENOENT { return .absent }
+            if err == EPERM || err == EACCES { return .protectedDataUnavailable }
+            return .tampered("安全告警：检测本地加密库节点时发生异常（POSIX errno \(err)），已拒绝覆盖！")
+        }
+
+        let leafMode = leafSt.st_mode & S_IFMT
+        if leafMode == S_IFREG {
+            return .regularFileExists
+        }
+        if leafMode == S_IFLNK {
+            return .tampered("安全告警：检测到本地加密库路径存在异常软链接（Symlink），疑似沙盒越界篡改，已拒绝覆盖写入！")
+        }
+        return .tampered("安全告警：检测到本地加密库路径存在非普通文件节点，已拒绝覆盖写入！")
+    }
+
+    /// Reads `vault.cardse` anchored to a verified `O_DIRECTORY | O_NOFOLLOW` descriptor via `openat`,
+    /// strictly enforcing non-symlink, regular-file, and bounded-size invariants while distinguishing
+    /// `NSFileProtectionComplete` lock-screen `EPERM`/`EACCES` from hostile tampering.
+    static func readLocalVaultFile(
+        at fileURL: URL,
+        ancestorDirectoriesToVerify: [URL],
+        maxBytes: Int = VaultCrypto.maximumVaultFileByteCount
+    ) -> LocalVaultReadResult {
+        let fileName = fileURL.lastPathComponent
+        guard isValidSinglePathComponent(fileName) else {
+            return .tampered("安全告警：加密库文件名非法，已阻断读取！")
+        }
+
+        for ancestor in ancestorDirectoriesToVerify {
+            var ast = stat()
+            if Darwin.lstat(ancestor.path, &ast) != 0 {
+                let err = errno
+                if err == ENOENT { return .notFound }
+                if err == EPERM || err == EACCES { return .protectedDataUnavailable }
+                return .tampered("安全告警：沙盒存储父目录状态异常（POSIX errno \(err)），已阻断读取！")
+            }
+            let mode = ast.st_mode & S_IFMT
+            if mode == S_IFLNK {
+                return .tampered("安全告警：检测到沙盒存储父目录被植入软链接（Symlink），疑似越界篡改，已拒绝读取！")
+            }
+            if mode != S_IFDIR {
+                return .tampered("安全告警：沙盒存储父路径不是合法目录，已拒绝读取！")
+            }
+        }
+
+        let storageDirURL = fileURL.deletingLastPathComponent()
+        var dst = stat()
+        if Darwin.lstat(storageDirURL.path, &dst) != 0 {
+            let err = errno
+            if err == ENOENT { return .notFound }
+            if err == EPERM || err == EACCES { return .protectedDataUnavailable }
+            return .tampered("安全告警：加密存储目录状态异常（POSIX errno \(err)），已阻断读取！")
+        }
+
+        let dirMode = dst.st_mode & S_IFMT
+        if dirMode == S_IFLNK {
+            return .tampered("安全告警：检测到加密存储目录被替换为软链接（Symlink），疑似沙盒越界篡改，已立即拒绝访问！")
+        }
+        if dirMode != S_IFDIR {
+            return .tampered("安全告警：加密存储路径不是合法目录（检测到异常特殊节点），已拒绝访问！")
+        }
+
+        let dirFD = Darwin.open(storageDirURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard dirFD >= 0 else {
+            let err = errno
+            if err == ENOENT { return .notFound }
+            if err == ELOOP || err == ENOTDIR {
+                return .tampered("安全告警：检测到加密存储目录软链接替换竞争攻击，已拒绝访问！")
+            }
+            if err == EPERM || err == EACCES { return .protectedDataUnavailable }
+            return .tampered("无法安全打开加密存储目录（POSIX errno \(err)）。")
+        }
+        defer { _ = Darwin.close(dirFD) }
+
+        var openedDirSt = stat()
+        guard Darwin.fstat(dirFD, &openedDirSt) == 0,
+              (openedDirSt.st_mode & S_IFMT) == S_IFDIR,
+              openedDirSt.st_dev == dst.st_dev,
+              openedDirSt.st_ino == dst.st_ino else {
+            return .tampered("安全告警：检测到加密存储目录并发替换异常，已阻断读取！")
+        }
+
+        var leafSt = stat()
+        if Darwin.fstatat(dirFD, fileName, &leafSt, AT_SYMLINK_NOFOLLOW) != 0 {
+            let err = errno
+            if err == ENOENT { return .notFound }
+            if err == EPERM || err == EACCES { return .protectedDataUnavailable }
+            return .tampered("检测本地加密库文件元数据时发生异常（POSIX errno \(err)）。")
+        }
+
+        let leafMode = leafSt.st_mode & S_IFMT
+        if leafMode == S_IFLNK {
+            return .tampered("安全告警：检测到本地加密库文件被替换为软链接（Symlink），疑似沙盒越界攻击，已拒绝解引用！")
+        }
+        if leafMode != S_IFREG {
+            return .tampered("安全告警：检测到本地加密库路径存在异常特殊节点（非普通文件），已拒绝打开！")
+        }
+        if leafSt.st_size <= 0 {
+            return .tampered("检测到本地加密库文件为空（0 字节）或已损坏")
+        }
+        if leafSt.st_size > off_t(maxBytes) {
+            return .tampered("安全告警：本地加密库文件体积异常超限（超过 \(maxBytes / (1024 * 1024)) MB 安全上限），疑似稀疏文件耗尽攻击，已拒绝加载！")
+        }
+
+        let fd = Darwin.openat(dirFD, fileName, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard fd >= 0 else {
+            let err = errno
+            if err == EPERM || err == EACCES {
+                return .protectedDataUnavailable
+            }
+            if err == ELOOP {
+                return .tampered("安全告警：检测到本地加密库软链接替换竞争攻击，已拒绝打开！")
+            }
+            if err == ENOENT {
+                return .notFound
+            }
+            return .tampered("无法安全读取本地加密库文件（POSIX errno \(err)）。")
+        }
+        defer { _ = Darwin.close(fd) }
+
+        switch readBoundedFromRegularFD(fd: fd, expectedStat: leafSt, maxBytes: maxBytes) {
+        case .data(let data):
+            return .data(data)
+        case .protectedDataUnavailable:
+            return .protectedDataUnavailable
+        case .tampered:
+            return .tampered("安全告警：读取本地加密库时检测到文件节点异常或并发篡改，已中止加载！")
+        case .invalidSize:
+            return .tampered("安全告警：本地加密库文件体积超出安全范围，已中止加载！")
+        }
+    }
+
+    /// Writes `data` atomically into `fileURL` with `NSFileProtectionComplete` (`PROTECTION_CLASS_A`)
+    /// without ever traversing symlinks on ancestors, the storage directory, staging file, or destination leaf.
+    static func writeLocalVaultFileAtomically(
+        _ data: Data,
+        to fileURL: URL,
+        ancestorDirectoriesToVerify: [URL]
+    ) throws {
+        guard !data.isEmpty, data.count <= VaultCrypto.maximumVaultFileByteCount else {
+            throw VaultCryptoError.invalidEnvelopeFormat
+        }
+        let fileName = fileURL.lastPathComponent
+        guard isValidSinglePathComponent(fileName) else {
+            throw VaultCryptoError.storageTampered("安全告警：加密库文件名非法，已拒绝写入！")
+        }
+
+        let storageDirURL = fileURL.deletingLastPathComponent()
+        try ensureSafeDirectory(at: storageDirURL, ancestorDirectoriesToVerify: ancestorDirectoriesToVerify)
+
+        var dirLstat = stat()
+        guard Darwin.lstat(storageDirURL.path, &dirLstat) == 0,
+              (dirLstat.st_mode & S_IFMT) == S_IFDIR else {
+            throw VaultCryptoError.storageTampered("安全告警：检测到加密存储目录状态异常，已拒绝写入！")
+        }
+
+        let dirFD = Darwin.open(storageDirURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard dirFD >= 0 else {
+            throw VaultCryptoError.storageTampered("安全告警：无法安全锁定加密存储目录，已拒绝写入！")
+        }
+        defer { _ = Darwin.close(dirFD) }
+
+        var dirFstat = stat()
+        guard Darwin.fstat(dirFD, &dirFstat) == 0,
+              (dirFstat.st_mode & S_IFMT) == S_IFDIR,
+              dirFstat.st_dev == dirLstat.st_dev,
+              dirFstat.st_ino == dirLstat.st_ino else {
+            throw VaultCryptoError.storageTampered("安全告警：检测到加密存储目录并发替换异常，已拒绝写入！")
+        }
+
+        var existingLeaf = stat()
+        if Darwin.fstatat(dirFD, fileName, &existingLeaf, AT_SYMLINK_NOFOLLOW) == 0,
+           (existingLeaf.st_mode & S_IFMT) != S_IFREG {
+            throw VaultCryptoError.storageTampered("安全告警：检测到本地加密库文件被替换为软链接或特殊节点，已拒绝写入！")
+        }
+
+        let stagingName = ".\(fileName).tmp.\(UUID().uuidString)"
+        let stagingURL = storageDirURL.appendingPathComponent(stagingName, isDirectory: false)
+
+        // `.withoutOverwriting` maps to POSIX `O_CREAT | O_EXCL` (never follows leaf symlinks),
+        // while `.completeFileProtection` assigns Class A SEP protection at inode creation time.
+        try data.write(to: stagingURL, options: [.withoutOverwriting, .completeFileProtection])
+
+        var postDirLstat = stat()
+        var stageStat = stat()
+        guard Darwin.lstat(storageDirURL.path, &postDirLstat) == 0,
+              postDirLstat.st_dev == dirFstat.st_dev,
+              postDirLstat.st_ino == dirFstat.st_ino,
+              Darwin.fstatat(dirFD, stagingName, &stageStat, AT_SYMLINK_NOFOLLOW) == 0,
+              (stageStat.st_mode & S_IFMT) == S_IFREG,
+              stageStat.st_size == off_t(data.count) else {
+            _ = Darwin.unlinkat(dirFD, stagingName, 0)
+            throw VaultCryptoError.storageTampered("安全告警：写入暂存加密文件时检测到目录替换或节点篡改，已中止提交！")
+        }
+
+        var preRenameLeaf = stat()
+        if Darwin.fstatat(dirFD, fileName, &preRenameLeaf, AT_SYMLINK_NOFOLLOW) == 0,
+           (preRenameLeaf.st_mode & S_IFMT) != S_IFREG {
+            _ = Darwin.unlinkat(dirFD, stagingName, 0)
+            throw VaultCryptoError.storageTampered("安全告警：提交前检测到目标加密库路径被植入异常节点，已中止提交！")
+        }
+
+        guard Darwin.renameat(dirFD, stagingName, dirFD, fileName) == 0 else {
+            let err = errno
+            _ = Darwin.unlinkat(dirFD, stagingName, 0)
+            throw VaultCryptoError.hardwareKeyUnavailable("原子提交加密库文件失败（POSIX errno \(err)）")
+        }
+
+        _ = Darwin.fsync(dirFD)
+        excludeFromAllBackupsIfNonSymlink(fileURL)
+    }
+
+    /// Safely migrates legacy `CardVaultStorage/vault.cardvault` to `CardSeStorage/vault.cardse`
+    /// using descriptor-anchored `renameat` + `rmdir`, refusing to follow any symlink.
+    static func migrateLegacyVaultIfPresent(
+        legacyFolderURL: URL,
+        legacyFileName: String,
+        targetFileURL: URL,
+        ancestorDirectoriesToVerify: [URL]
+    ) {
+        guard isValidSinglePathComponent(legacyFileName),
+              isValidSinglePathComponent(targetFileURL.lastPathComponent) else {
+            return
+        }
+
+        for ancestor in ancestorDirectoriesToVerify {
+            var ast = stat()
+            guard Darwin.lstat(ancestor.path, &ast) == 0,
+                  (ast.st_mode & S_IFMT) == S_IFDIR else {
+                return
+            }
+        }
+
+        var legacyDirStat = stat()
+        guard Darwin.lstat(legacyFolderURL.path, &legacyDirStat) == 0,
+              (legacyDirStat.st_mode & S_IFMT) == S_IFDIR else {
+            return
+        }
+
+        let legacyDirFD = Darwin.open(legacyFolderURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard legacyDirFD >= 0 else { return }
+        defer { _ = Darwin.close(legacyDirFD) }
+
+        var legacyLeafStat = stat()
+        if Darwin.fstatat(legacyDirFD, legacyFileName, &legacyLeafStat, AT_SYMLINK_NOFOLLOW) == 0 {
+            guard (legacyLeafStat.st_mode & S_IFMT) == S_IFREG,
+                  legacyLeafStat.st_size > 0,
+                  legacyLeafStat.st_size <= off_t(VaultCrypto.maximumVaultFileByteCount) else {
+                return
+            }
+
+            let targetDirURL = targetFileURL.deletingLastPathComponent()
+            guard (try? ensureSafeDirectory(at: targetDirURL, ancestorDirectoriesToVerify: ancestorDirectoriesToVerify)) != nil else {
+                return
+            }
+
+            let targetDirFD = Darwin.open(targetDirURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard targetDirFD >= 0 else { return }
+            defer { _ = Darwin.close(targetDirFD) }
+
+            let targetFileName = targetFileURL.lastPathComponent
+            var existingTarget = stat()
+            if Darwin.fstatat(targetDirFD, targetFileName, &existingTarget, AT_SYMLINK_NOFOLLOW) != 0,
+               errno == ENOENT {
+                if Darwin.renameat(legacyDirFD, legacyFileName, targetDirFD, targetFileName) == 0 {
+                    _ = Darwin.fsync(targetDirFD)
+                    excludeFromAllBackupsIfNonSymlink(targetFileURL)
+                }
+            }
+        }
+
+        var postLegacyLeaf = stat()
+        if Darwin.fstatat(legacyDirFD, legacyFileName, &postLegacyLeaf, AT_SYMLINK_NOFOLLOW) != 0,
+           errno == ENOENT {
+            _ = Darwin.rmdir(legacyFolderURL.path)
+        }
+    }
+
+    /// Best-effort zero-overwrites and unlinks `vault.cardse` and `storageDirectoryURL` WITHOUT following symlinks,
+    /// so an attacker-planted symlink at `CardSeStorage` or `vault.cardse` can never trick Enkard into zeroing or
+    /// deleting files outside the storage directory.
+    static func shredAndRemoveLocalVault(
+        fileURL: URL,
+        storageDirectoryURL: URL,
+        ancestorDirectoriesToVerify: [URL]
+    ) {
+        for ancestor in ancestorDirectoriesToVerify {
+            var ast = stat()
+            guard Darwin.lstat(ancestor.path, &ast) == 0,
+                  (ast.st_mode & S_IFMT) == S_IFDIR else {
+                return
+            }
+        }
+
+        var dirStat = stat()
+        guard Darwin.lstat(storageDirectoryURL.path, &dirStat) == 0 else {
+            return
+        }
+
+        if (dirStat.st_mode & S_IFMT) != S_IFDIR {
+            // `storageDirectoryURL` itself was replaced with a symlink or non-directory node:
+            // unlink ONLY that node and NEVER traverse into its target!
+            _ = Darwin.unlink(storageDirectoryURL.path)
+            return
+        }
+
+        let fileName = fileURL.lastPathComponent
+        if isValidSinglePathComponent(fileName) {
+            let dirFD = Darwin.open(storageDirectoryURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            if dirFD >= 0 {
+                var openedDirStat = stat()
+                if Darwin.fstat(dirFD, &openedDirStat) == 0,
+                   (openedDirStat.st_mode & S_IFMT) == S_IFDIR,
+                   openedDirStat.st_dev == dirStat.st_dev,
+                   openedDirStat.st_ino == dirStat.st_ino {
+                    var leafSt = stat()
+                    if Darwin.fstatat(dirFD, fileName, &leafSt, AT_SYMLINK_NOFOLLOW) == 0 {
+                        let leafMode = leafSt.st_mode & S_IFMT
+                        if leafMode == S_IFREG {
+                            if leafSt.st_size > 0 {
+                                let wfd = Darwin.openat(dirFD, fileName, O_WRONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+                                if wfd >= 0 {
+                                    var wfst = stat()
+                                    if Darwin.fstat(wfd, &wfst) == 0,
+                                       (wfst.st_mode & S_IFMT) == S_IFREG,
+                                       wfst.st_dev == leafSt.st_dev,
+                                       wfst.st_ino == leafSt.st_ino {
+                                        let wipeCount = min(Int(leafSt.st_size), 1024 * 1024)
+                                        let zeroes = [UInt8](repeating: 0, count: min(wipeCount, 65_536))
+                                        var remaining = wipeCount
+                                        while remaining > 0 {
+                                            let chunkLen = min(remaining, zeroes.count)
+                                            let written = Darwin.write(wfd, zeroes, chunkLen)
+                                            if written <= 0 {
+                                                if written < 0 && errno == EINTR { continue }
+                                                break
+                                            }
+                                            remaining -= written
+                                        }
+                                        _ = Darwin.fsync(wfd)
+                                    }
+                                    _ = Darwin.close(wfd)
+                                }
+                            }
+                            _ = Darwin.unlinkat(dirFD, fileName, 0)
+                        } else if leafMode == S_IFDIR {
+                            _ = Darwin.unlinkat(dirFD, fileName, AT_REMOVEDIR)
+                        } else {
+                            // Symlink, FIFO, socket, etc.: unlink the directory entry directly WITHOUT opening or dereferencing!
+                            _ = Darwin.unlinkat(dirFD, fileName, 0)
+                        }
+                    }
+                }
+                _ = Darwin.close(dirFD)
+            }
+        }
+
+        var postDirStat = stat()
+        if Darwin.lstat(storageDirectoryURL.path, &postDirStat) == 0,
+           (postDirStat.st_mode & S_IFMT) == S_IFDIR,
+           postDirStat.st_dev == dirStat.st_dev,
+           postDirStat.st_ino == dirStat.st_ino {
+            _ = Darwin.rmdir(storageDirectoryURL.path)
+        }
     }
 }

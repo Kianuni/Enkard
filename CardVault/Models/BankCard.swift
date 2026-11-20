@@ -10,9 +10,9 @@ enum CardType: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .credit: return "信用卡"
-        case .debit: return "借记卡"
-        case .virtual: return "虚拟卡"
+        case .credit: return tr("信用卡", "Credit Card")
+        case .debit: return tr("借记卡", "Debit Card")
+        case .virtual: return tr("虚拟卡", "Virtual Card")
         }
     }
 
@@ -38,7 +38,7 @@ enum CardNetwork: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var badgeText: String {
         switch self {
-        case .unionPay: return "银联 UnionPay"
+        case .unionPay: return tr("银联 UnionPay", "UnionPay")
         case .visa: return "VISA"
         case .mastercard: return "Mastercard"
         case .amex: return "AMEX"
@@ -50,13 +50,25 @@ enum CardNetwork: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var shortName: String {
         switch self {
-        case .unionPay: return "银联"
+        case .unionPay: return tr("银联", "UnionPay")
         case .visa: return "Visa"
-        case .mastercard: return "万事达"
-        case .amex: return "美国运通"
+        case .mastercard: return tr("万事达", "Mastercard")
+        case .amex: return tr("美国运通", "Amex")
         case .jcb: return "JCB"
         case .discover: return "Discover"
-        case .other: return "其他"
+        case .other: return tr("其他", "Other")
+        }
+    }
+
+    var searchKeywords: [String] {
+        switch self {
+        case .unionPay: return ["银联", "unionpay"]
+        case .visa: return ["visa", "维萨"]
+        case .mastercard: return ["万事达", "mastercard", "master"]
+        case .amex: return ["美国运通", "amex", "american express"]
+        case .jcb: return ["jcb"]
+        case .discover: return ["discover"]
+        case .other: return ["其他", "other", "bank card"]
         }
     }
 
@@ -110,14 +122,14 @@ enum CardTheme: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .obsidianGold: return "曜石黑金"
-        case .midnightBlue: return "深海鎏蓝"
-        case .titaniumSlate: return "钛金深灰"
-        case .emeraldJade: return "翡翠暗绿"
-        case .crimsonRuby: return "绯红丝绒"
-        case .royalViolet: return "流光暗紫"
-        case .auroraTeal: return "极光青黛"
-        case .roseBronze: return "玫瑰古铜"
+        case .obsidianGold: return tr("曜石黑金", "Obsidian Gold")
+        case .midnightBlue: return tr("深海鎏蓝", "Midnight Blue")
+        case .titaniumSlate: return tr("钛金深灰", "Titanium Slate")
+        case .emeraldJade: return tr("翡翠暗绿", "Emerald Jade")
+        case .crimsonRuby: return tr("绯红丝绒", "Crimson Ruby")
+        case .royalViolet: return tr("流光暗紫", "Royal Violet")
+        case .auroraTeal: return tr("极光青黛", "Aurora Teal")
+        case .roseBronze: return tr("玫瑰古铜", "Rose Bronze")
         }
     }
 
@@ -368,7 +380,7 @@ struct BankCard: Identifiable, Codable, Equatable, Hashable, Sendable {
         if !bankName.isEmpty && !nickname.isEmpty {
             return "\(bankName) · \(nickname)"
         }
-        return bankName.isEmpty ? (nickname.isEmpty ? "未命名卡片" : nickname) : bankName
+        return bankName.isEmpty ? (nickname.isEmpty ? tr("未命名卡片", "Untitled Card") : nickname) : bankName
     }
 
     var formattedNumber: String {

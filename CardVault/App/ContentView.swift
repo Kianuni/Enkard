@@ -32,17 +32,18 @@ struct ContentView: View {
                 .zIndex(50)
             }
         }
+        .environment(\.locale, store.effectiveLocale)
         .lockdownTextInput()
         .disableSystemWritingTools()
         .animation(.easeInOut(duration: 0.22), value: store.clipboard.activeToast)
         .alert(
-            "Enkard 安全警报",
+            tr("Enkard 安全警报", "Enkard Security Alert"),
             isPresented: Binding(
                 get: { store.securityNotice != nil },
                 set: { if !$0 { store.securityNotice = nil } }
             )
         ) {
-            Button("知道了", role: .cancel) {}
+            Button(tr("知道了", "OK"), role: .cancel) {}
         } message: {
             Text(store.securityNotice ?? "")
         }

@@ -33,6 +33,8 @@
 		A10000172B00000100000001 /* HardwareKeyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000182B00000100000001 /* HardwareKeyProvider.swift */; };
 		A10000182B00000100000001 /* RuntimeSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000192B00000100000001 /* RuntimeSecurity.swift */; };
 		A10000192B00000100000001 /* NetworkLockdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200001A2B00000100000001 /* NetworkLockdown.swift */; };
+		A100001A2B00000100000001 /* AppLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200001B2B00000100000001 /* AppLanguage.swift */; };
+		A100001B2B00000100000001 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = A200001C2B00000100000001 /* InfoPlist.strings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,6 +77,9 @@
 		A20000182B00000100000001 /* HardwareKeyProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareKeyProvider.swift; sourceTree = "<group>"; };
 		A20000192B00000100000001 /* RuntimeSecurity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeSecurity.swift; sourceTree = "<group>"; };
 		A200001A2B00000100000001 /* NetworkLockdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkLockdown.swift; sourceTree = "<group>"; };
+		A200001B2B00000100000001 /* AppLanguage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLanguage.swift; sourceTree = "<group>"; };
+		A200001D2B00000100000001 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		A200001E2B00000100000001 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = "en.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -113,6 +118,7 @@
 				A50000062B00000100000001 /* Store */,
 				A50000072B00000100000001 /* Views */,
 				A20000112B00000100000001 /* Assets.xcassets */,
+				A200001C2B00000100000001 /* InfoPlist.strings */,
 				A20000122B00000100000001 /* Info.plist */,
 			);
 			path = CardVault;
@@ -123,6 +129,7 @@
 			children = (
 				A20000142B00000100000001 /* PrivacyShieldWindow.swift */,
 				A20000132B00000100000001 /* AppDelegate.swift */,
+				A200001B2B00000100000001 /* AppLanguage.swift */,
 				A20000012B00000100000001 /* CardVaultApp.swift */,
 				A20000022B00000100000001 /* ContentView.swift */,
 			);
@@ -196,6 +203,18 @@
 		};
 /* End PBXGroup section */
 
+/* Begin PBXVariantGroup section */
+		A200001C2B00000100000001 /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				A200001D2B00000100000001 /* zh-Hans */,
+				A200001E2B00000100000001 /* en */,
+			);
+			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
 /* Begin PBXNativeTarget section */
 		A60000012B00000100000001 /* Enkard */ = {
 			isa = PBXNativeTarget;
@@ -256,6 +275,7 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				"zh-Hans",
 				zh_CN,
 				Base,
 			);
@@ -276,6 +296,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000112B00000100000001 /* Assets.xcassets in Resources */,
+				A100001B2B00000100000001 /* InfoPlist.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -289,6 +310,7 @@
 				A10000172B00000100000001 /* HardwareKeyProvider.swift in Sources */,
 				A10000182B00000100000001 /* RuntimeSecurity.swift in Sources */,
 				A10000192B00000100000001 /* NetworkLockdown.swift in Sources */,
+				A100001A2B00000100000001 /* AppLanguage.swift in Sources */,
 				A10000162B00000100000001 /* SecureDisplay.swift in Sources */,
 				A10000152B00000100000001 /* SecureCounters.swift in Sources */,
 				A10000142B00000100000001 /* PasswordPolicy.swift in Sources */,
@@ -388,14 +410,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				INFOPLIST_FILE = CardVault/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3.3;
+				MARKETING_VERSION = 2.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.local.cardse.app;
 				PRODUCT_NAME = Enkard;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -409,7 +431,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEAD_CODE_STRIPPING = YES;
 				DEPLOYMENT_POSTPROCESSING = YES;
 				INFOPLIST_FILE = CardVault/Info.plist;
@@ -418,7 +440,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3.3;
+				MARKETING_VERSION = 2.4.0;
 				OTHER_SWIFT_FLAGS = (
 					"$(inherited)",
 					"-Xfrontend",

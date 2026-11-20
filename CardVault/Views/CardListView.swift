@@ -1,14 +1,25 @@
 import SwiftUI
 
 enum CardFilterCategory: String, CaseIterable, Identifiable {
-    case all = "全部"
-    case favorites = "收藏"
-    case international = "外币/海淘卡"
-    case unionPay = "银联"
-    case credit = "信用卡"
-    case debit = "借记卡"
+    case all
+    case favorites
+    case international
+    case unionPay
+    case credit
+    case debit
 
     var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return tr("全部", "All")
+        case .favorites: return tr("收藏", "Favorites")
+        case .international: return tr("外币/海淘卡", "Global")
+        case .unionPay: return tr("银联", "UnionPay")
+        case .credit: return tr("信用卡", "Credit")
+        case .debit: return tr("借记卡", "Debit")
+        }
+    }
 }
 
 struct CardListView: View {
@@ -47,6 +58,7 @@ struct CardListView: View {
                 || card.last4.contains(query)
                 || card.network.shortName.lowercased().contains(query)
                 || card.network.badgeText.lowercased().contains(query)
+                || card.network.searchKeywords.contains(where: { $0.contains(query) })
                 || card.cardholderName.lowercased().contains(query)
         }
     }
@@ -73,8 +85,10 @@ struct CardListView: View {
                             if filteredCards.isEmpty {
                                 EnkardUnavailableStateView(
                                     icon: "magnifyingglass",
-                                    title: "无匹配卡片",
-                                    subtitle: searchText.isEmpty ? "当前筛选分类下暂无银行卡" : "未找到包含「\(searchText)」的银行卡"
+                                    title: tr("无匹配卡片", "No Matching Cards"),
+                                    subtitle: searchText.isEmpty
+                                        ? tr("当前筛选分类下暂无银行卡", "No cards in this category yet")
+                                        : tr("未找到包含「\(searchText)」的银行卡", "No cards matching \"\(searchText)\"")
                                 )
                                 .padding(.top, 40)
                             } else {
@@ -84,13 +98,13 @@ struct CardListView: View {
                                             card: card,
                                             forceMasked: store.isScreenCaptured,
                                             onCopyNumber: {
-                                                store.copySecure(card.digitsOnly, label: "无空格卡号")
+                                                store.copySecure(card.digitsOnly, label: tr("无空格卡号", "Card Number"))
                                             },
                                             onCopyExpiry: {
-                                                store.copySecure(card.formattedExpiry, label: "有效期")
+                                                store.copySecure(card.formattedExpiry, label: tr("有效期", "Expiry"))
                                             },
                                             onCopyCVV: {
-                                                store.copySecure(card.cvv, label: "安全码 CVV")
+                                                store.copySecure(card.cvv, label: tr("安全码 CVV", "CVV"))
                                             }
                                         )
                                     }
@@ -105,7 +119,7 @@ struct CardListView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Enkard")
-            .searchable(text: $searchText, prompt: "搜索银行、别名、尾号、卡组织")
+            .searchable(text: $searchText, prompt: tr("搜索银行、别名、尾号、卡组织", "Search bank, alias, last 4, or network"))
             .lockdownTextInput()
             .toolbar {
                 ToolbarItemGroup(placement: .cardSeLeading) {
@@ -114,7 +128,7 @@ struct CardListView: View {
                     } label: {
                         Image(systemName: "lock.fill")
                     }
-                    .accessibilityLabel("立即锁定")
+                    .accessibilityLabel(tr("立即锁定", "Lock Now"))
 
                     if store.biometricsEnabled && store.biometricKind != .none {
                         Button {
@@ -123,7 +137,7 @@ struct CardListView: View {
                             Image(systemName: "exclamationmark.lock.fill")
                                 .foregroundStyle(.orange)
                         }
-                        .accessibilityLabel("紧急锁定（禁用生物识别）")
+                        .accessibilityLabel(tr("紧急锁定（禁用生物识别）", "Emergency Lockdown (Disable Biometrics)"))
                     }
 
                     Button {
@@ -131,18 +145,21 @@ struct CardListView: View {
                     } label: {
                         Image(systemName: "shield.lefthalf.filled")
                     }
-                    .accessibilityLabel("安全与备份设置")
+                    .accessibilityLabel(tr("安全与备份设置", "Security & Backup Settings"))
                 }
 
                 ToolbarItem(placement: .cardSeTrailing) {
                     Button {
                         guard !store.isScreenCaptured else {
-                            store.securityNotice = "正在录屏或投屏期间，禁止进入添加或编辑银行卡页面。"
+                            store.securityNotice = tr(
+                                "正在录屏或投屏期间，禁止进入添加或编辑银行卡页面。",
+                                "Adding or editing cards is blocked during screen recording or mirroring."
+                            )
                             return
                         }
                         showingAddCard = true
                     } label: {
-                        Label("添加卡片", systemImage: "plus.circle.fill")
+                        Label(tr("添加卡片", "Add Card"), systemImage: "plus.circle.fill")
                             .fontWeight(.semibold)
                     }
                     .disabled(store.isScreenCaptured)
@@ -193,7 +210,7 @@ struct CardListView: View {
                             selectedFilter = category
                         }
                     } label: {
-                        Text(category.rawValue)
+                        Text(category.title)
                             .font(.subheadline.weight(isSelected ? .semibold : .regular))
                             .foregroundStyle(isSelected ? Color.white : Color.primary)
                             .padding(.horizontal, 14)
@@ -222,10 +239,13 @@ struct CardListView: View {
                     .foregroundStyle(.tint)
             }
 
-            Text("还没有保存银行卡")
+            Text(tr("还没有保存银行卡", "No Cards Stored Yet"))
                 .font(.title3.bold())
 
-            Text("卡片信息由本机 Secure Enclave 安全芯片加密，零联网零同步。网购时一键复制，锁屏或到期自动销毁。")
+            Text(tr(
+                "卡片信息由本机 Secure Enclave 安全芯片加密，零联网零同步。网购时一键复制，锁屏或到期自动销毁。",
+                "Your cards are encrypted locally via Secure Enclave with zero network or cloud sync. Tap to copy at checkout; clipboard clears on lock or timeout."
+            ))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -235,7 +255,7 @@ struct CardListView: View {
                 guard !store.isScreenCaptured else { return }
                 showingAddCard = true
             } label: {
-                Label("添加第一张银行卡", systemImage: "plus")
+                Label(tr("添加第一张银行卡", "Add Your First Card"), systemImage: "plus")
                     .fontWeight(.semibold)
                     .padding(.horizontal, 22)
                     .padding(.vertical, 12)
@@ -268,14 +288,14 @@ private struct CardDeckItemView: View {
             HStack(spacing: 8) {
                 QuickCopyPillButton(
                     icon: "doc.on.doc.fill",
-                    title: "复制卡号",
+                    title: tr("复制卡号", "Copy No."),
                     action: onCopyNumber
                 )
 
                 if !card.formattedExpiry.isEmpty {
                     QuickCopyPillButton(
                         icon: "calendar",
-                        title: "复制有效期",
+                        title: tr("复制有效期", "Expiry"),
                         action: onCopyExpiry
                     )
                 }
@@ -283,7 +303,7 @@ private struct CardDeckItemView: View {
                 if !card.cvv.isEmpty {
                     QuickCopyPillButton(
                         icon: "lock.rectangle.fill",
-                        title: "复制 CVV",
+                        title: tr("复制 CVV", "CVV"),
                         action: onCopyCVV
                     )
                 }

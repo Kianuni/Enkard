@@ -111,7 +111,7 @@ echo "== 3. 包内文件严格白名单检查 =="
 extra=0
 while IFS= read -r rel; do
   case "$rel" in
-    "$EXECUTABLE"|Info.plist|PkgInfo|Assets.car|AppIcon60x60@2x.png|AppIcon60x60@3x.png|AppIcon76x76@2x~ipad.png|embedded.mobileprovision|_CodeSignature|_CodeSignature/CodeResources|SC_Info|SC_Info/Manifest.plist) ;;
+    "$EXECUTABLE"|Info.plist|PkgInfo|Assets.car|AppIcon60x60@2x.png|AppIcon60x60@3x.png|AppIcon76x76@2x~ipad.png|InfoPlist.loctable|en.lproj|en.lproj/InfoPlist.strings|zh-Hans.lproj|zh-Hans.lproj/InfoPlist.strings|zh_CN.lproj|zh_CN.lproj/InfoPlist.strings|embedded.mobileprovision|_CodeSignature|_CodeSignature/CodeResources|SC_Info|SC_Info/Manifest.plist) ;;
     *)
       echo "❌ 发现原始构建之外的可疑文件：$rel"
       extra=1

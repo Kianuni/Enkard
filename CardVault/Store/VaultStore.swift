@@ -64,6 +64,22 @@ final class VaultStore: ObservableObject {
         didSet { savePreferences() }
     }
 
+    @Published var languageMode: AppLanguageMode {
+        didSet {
+            L10n.setMode(languageMode)
+            guard !isLoadingPreferences else { return }
+            savePreferences()
+            runtimeIntegrity = RuntimeSecurity.auditEnvironment(
+                antiDebugActive: AppDelegate.antiDebugEnabledAtLaunch
+            )
+            PrivacyShieldWindowManager.shared.refreshLanguage()
+        }
+    }
+
+    var effectiveLocale: Locale {
+        L10n.locale
+    }
+
     // MARK: - Session state
 
     private var currentEnvelope: VaultEnvelope?
@@ -107,6 +123,7 @@ final class VaultStore: ObservableObject {
         self.idleLockTimeout = .minutes3
         self.clipboardClearDuration = .seconds15
         self.wipeAfterFailedAttempts = false
+        self.languageMode = .system
         self.clipboardCancellable = clipboard.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
@@ -136,7 +153,10 @@ final class VaultStore: ObservableObject {
             clipboard.clearIfOwned()
             KeychainBiometrics.deleteBiometricDEK()
             lock(reason: .securityAnomaly)
-            let msg = "检测到外部调试器附加，已立即销毁内存会话并拒绝执行敏感密钥操作。"
+            let msg = tr(
+                "检测到外部调试器附加，已立即销毁内存会话并拒绝执行敏感密钥操作。",
+                "External debugger detected. Memory session wiped and sensitive cryptographic operation refused."
+            )
             errorMessage = msg
             securityNotice = msg
             return true
@@ -157,6 +177,9 @@ final class VaultStore: ObservableObject {
         idleLockTimeout = IdleLockTimeout(rawValue: prefs.idleLockTimeoutRaw) ?? .minutes3
         clipboardClearDuration = ClipboardClearDuration(rawValue: prefs.clipboardClearDurationRaw) ?? .seconds15
         wipeAfterFailedAttempts = prefs.wipeAfterFailedAttempts
+        let loadedLanguageMode = AppLanguageMode(rawValue: prefs.languageModeRaw) ?? .system
+        languageMode = loadedLanguageMode
+        L10n.setMode(loadedLanguageMode)
         isLoadingPreferences = false
 
         runtimeIntegrity = RuntimeSecurity.auditEnvironment(
@@ -189,7 +212,8 @@ final class VaultStore: ObservableObject {
             autoLockTimeoutRaw: autoLockTimeout.rawValue,
             idleLockTimeoutRaw: idleLockTimeout.rawValue,
             clipboardClearDurationRaw: clipboardClearDuration.rawValue,
-            wipeAfterFailedAttempts: wipeAfterFailedAttempts
+            wipeAfterFailedAttempts: wipeAfterFailedAttempts,
+            languageModeRaw: languageMode.rawValue
         )
         VaultPreferencesStore.save(prefs, using: stateBackend)
     }
@@ -241,7 +265,8 @@ final class VaultStore: ObservableObject {
     }
 
     var hardwareProtectionDescription: String {
-        hardwareKeys.currentProtectionTier?.displayTitle ?? "创建保险库时自动绑定 Secure Enclave"
+        hardwareKeys.currentProtectionTier?.displayTitle
+            ?? tr("创建保险库时自动绑定 Secure Enclave", "Automatically binds to Secure Enclave on creation")
     }
 
     var kdfIterations: Int {
@@ -278,7 +303,10 @@ final class VaultStore: ObservableObject {
                 wipeSensitiveMemory()
                 return
             case .found(let existingRecord):
-                securityNotice = "安全警告：系统钥匙串中存在第 \(existingRecord.generation) 版卡包记录，但本地加密文件已不存在。若非您本人卸载重装，请注意设备安全，并仅从可信备份恢复。"
+                securityNotice = tr(
+                    "安全警告：系统钥匙串中存在第 \(existingRecord.generation) 版卡包记录，但本地加密文件已不存在。若非您本人卸载重装，请注意设备安全，并仅从可信备份恢复。",
+                    "Security Warning: Keychain holds a record for vault revision \(existingRecord.generation), but the local encrypted vault file is missing. If you did not reinstall the app, inspect your device and restore only from a trusted backup."
+                )
             case .notFound:
                 break
             }
@@ -320,7 +348,7 @@ final class VaultStore: ObservableObject {
         } else {
             currentEnvelope = nil
             phase = .locked
-            errorMessage = "检测到本地加密库文件损坏或格式异常"
+            errorMessage = tr("检测到本地加密库文件损坏或格式异常", "Local encrypted vault file is corrupted or malformed")
         }
     }
 
@@ -364,11 +392,17 @@ final class VaultStore: ObservableObject {
         case .absent:
             break
         case .regularFileExists:
-            errorMessage = "检测到本机已存在加密卡包文件，已拒绝覆盖初始化。请先解锁现有卡包。"
+            errorMessage = tr(
+                "检测到本机已存在加密卡包文件，已拒绝覆盖初始化。请先解锁现有卡包。",
+                "An existing encrypted vault was found on this device. Overwrite refused; please unlock the existing vault."
+            )
             loadVaultStateFromDisk()
             return false
         case .protectedDataUnavailable:
-            errorMessage = "本机受保护存储暂不可访问，请确认设备处于解锁状态后再试。"
+            errorMessage = tr(
+                "本机受保护存储暂不可访问，请确认设备处于解锁状态后再试。",
+                "Protected device storage is temporarily unavailable. Unlock your iPhone and try again."
+            )
             loadVaultStateFromDisk()
             return false
         case .tampered(let reason):
@@ -399,7 +433,10 @@ final class VaultStore: ObservableObject {
                 VaultIdentityRecord(vaultID: vaultID, generation: 1, envelopeVersion: VaultEnvelope.currentVersion),
                 using: stateBackend
             ) else {
-                throw VaultCryptoError.hardwareKeyUnavailable("无法向本机钥匙串写入防回滚身份标识，请确认设备处于解锁状态")
+                throw VaultCryptoError.hardwareKeyUnavailable(tr(
+                    "无法向本机钥匙串写入防回滚身份标识，请确认设备处于解锁状态",
+                    "Unable to write anti-rollback identity to Keychain. Make sure your device is unlocked."
+                ))
             }
 
             try persistEnvelope(result.envelope)
@@ -469,8 +506,8 @@ final class VaultStore: ObservableObject {
         }
         guard let envelope = currentEnvelope else {
             errorMessage = needsReloadWhenProtectedDataAvailable
-                ? "设备数据保护尚未就绪，请先解锁手机屏幕后再试"
-                : "未找到可解锁的本地加密库"
+                ? tr("设备数据保护尚未就绪，请先解锁手机屏幕后再试", "Device data protection is not ready yet. Unlock your iPhone and try again.")
+                : tr("未找到可解锁的本地加密库", "No local encrypted vault found")
             return false
         }
 
@@ -484,7 +521,7 @@ final class VaultStore: ObservableObject {
         var recordedGeneration: UInt64 = 0
         switch identityState {
         case .unavailable:
-            errorMessage = "系统钥匙串防回滚状态暂不可读，请先解锁手机屏幕后再试"
+            errorMessage = tr("系统钥匙串防回滚状态暂不可读，请先解锁手机屏幕后再试", "Keychain anti-rollback state is temporarily unreadable. Unlock your iPhone and try again.")
             return false
         case .corrupted:
             allowLegacyV1 = false
@@ -501,7 +538,7 @@ final class VaultStore: ObservableObject {
 
         // Fail-Closed: persist the incremented attempt counter to Keychain BEFORE running PBKDF2!
         guard lockout.beginAttempt() else {
-            errorMessage = "安全计数器无法写入系统钥匙串，已中止密码验证（请确认手机已解锁）"
+            errorMessage = tr("安全计数器无法写入系统钥匙串，已中止密码验证（请确认手机已解锁）", "Unable to persist attempt counter to Keychain. Verification aborted (ensure device is unlocked).")
             return false
         }
 
@@ -597,7 +634,10 @@ final class VaultStore: ObservableObject {
 
             if wipeAfterFailedAttempts && failures >= LockoutPolicy.wipeThreshold {
                 destroyVaultCompletely()
-                errorMessage = "主密码已连续输错 \(failures) 次，已按设置触发硬件密钥销毁并擦除本机卡包。"
+                errorMessage = tr(
+                    "主密码已连续输错 \(failures) 次，已按设置触发硬件密钥销毁并擦除本机卡包。",
+                    "Master password failed \(failures) consecutive times. Hardware key destroyed and local vault erased per policy."
+                )
                 return false
             }
 
@@ -606,10 +646,17 @@ final class VaultStore: ObservableObject {
             if wait > 0 {
                 message += "\n" + Self.lockoutMessage(wait)
             } else if failures >= 3 {
-                message += "\n已连续输错 \(failures) 次，第 \(LockoutPolicy.biometricSuspensionThreshold) 次起将禁用生物识别并递增锁定时间"
+                message += tr(
+                    "\n已连续输错 \(failures) 次，第 \(LockoutPolicy.biometricSuspensionThreshold) 次起将禁用生物识别并递增锁定时间",
+                    "\n\(failures) consecutive failed attempts. Biometrics disable and backoff escalates starting at attempt \(LockoutPolicy.biometricSuspensionThreshold)."
+                )
             }
             if wipeAfterFailedAttempts && failures >= LockoutPolicy.wipeThreshold - 5 {
-                message += "\n⚠️ 再错 \(LockoutPolicy.wipeThreshold - failures) 次将永久销毁本机安全密钥与卡包"
+                let remainingUntilWipe = LockoutPolicy.wipeThreshold - failures
+                message += tr(
+                    "\n⚠️ 再错 \(remainingUntilWipe) 次将永久销毁本机安全密钥与卡包",
+                    "\n⚠️ \(remainingUntilWipe) more failed attempt(s) will permanently destroy the hardware key and erase the vault."
+                )
             }
             errorMessage = message
             return false
@@ -620,7 +667,7 @@ final class VaultStore: ObservableObject {
         if rejectIfDebuggerAttached() { return false }
         guard !isBusy else { return false }
         guard !isBiometricSuspendedBySecurityPolicy else {
-            errorMessage = "当前安全策略要求输入主密码解锁"
+            errorMessage = tr("当前安全策略要求输入主密码解锁", "Current security policy requires your master password")
             return false
         }
 
@@ -635,22 +682,22 @@ final class VaultStore: ObservableObject {
         let recordedIdentity: VaultIdentityRecord
         switch VaultIdentityStore.readState(using: stateBackend) {
         case .unavailable, .corrupted:
-            errorMessage = "系统钥匙串防回滚状态异常，已暂停快捷解锁，请输入主密码验证"
+            errorMessage = tr("系统钥匙串防回滚状态异常，已暂停快捷解锁，请输入主密码验证", "Keychain anti-rollback state anomaly. Quick unlock paused; enter your master password.")
             return false
         case .notFound:
             KeychainBiometrics.deleteBiometricDEK()
-            errorMessage = "未找到本机防回滚身份记录，已暂停快捷解锁，请输入主密码核验"
+            errorMessage = tr("未找到本机防回滚身份记录，已暂停快捷解锁，请输入主密码核验", "Anti-rollback identity record missing. Quick unlock paused; verify with your master password.")
             return false
         case .found(let record):
             if record.envelopeVersion >= VaultEnvelope.currentVersion,
                envelope.magic != VaultEnvelope.localMagicV2 {
                 KeychainBiometrics.deleteBiometricDEK()
-                errorMessage = "检测到本地加密库版本异常降级，已阻止快捷解锁，请使用主密码核查安全状态"
+                errorMessage = tr("检测到本地加密库版本异常降级，已阻止快捷解锁，请使用主密码核查安全状态", "Unexpected vault version downgrade detected. Quick unlock blocked; verify with your master password.")
                 return false
             }
             if let expectedID = record.vaultID, expectedID != envelope.vaultID {
                 KeychainBiometrics.deleteBiometricDEK()
-                errorMessage = "严重警告：检测到本地加密库文件标识异常替换，已禁用快捷解锁，请使用主密码核验"
+                errorMessage = tr("严重警告：检测到本地加密库文件标识异常替换，已禁用快捷解锁，请使用主密码核验", "Critical Warning: Vault ID mismatch detected (file may have been swapped). Quick unlock disabled; verify with your master password.")
                 return false
             }
             recordedIdentity = record
@@ -672,7 +719,10 @@ final class VaultStore: ObservableObject {
             // Block biometric auto-unlock if ciphertext generation was rolled back!
             if payload.generation < recordedIdentity.generation {
                 KeychainBiometrics.deleteBiometricDEK()
-                errorMessage = "严重警告：检测到加密文件版本回滚（第 \(payload.generation) 版旧于钥匙串第 \(recordedIdentity.generation) 版），已禁用快捷解锁，请使用主密码核验"
+                errorMessage = tr(
+                    "严重警告：检测到加密文件版本回滚（第 \(payload.generation) 版旧于钥匙串第 \(recordedIdentity.generation) 版），已禁用快捷解锁，请使用主密码核验",
+                    "Critical Warning: Vault rollback detected (file revision \(payload.generation) is older than Keychain revision \(recordedIdentity.generation)). Quick unlock disabled; verify with your master password."
+                )
                 return false
             }
 
@@ -709,7 +759,10 @@ final class VaultStore: ObservableObject {
         lockout.setLockdownActive(true)
         wipeSensitiveMemory()
         phase = .locked
-        errorMessage = "已进入紧急锁定模式：生物识别已临时移除，下次必须输入主密码才能解锁"
+        errorMessage = tr(
+            "已进入紧急锁定模式：生物识别已临时移除，下次必须输入主密码才能解锁",
+            "Emergency Lockdown active: biometrics temporarily purged. Your master password is required next time."
+        )
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
     }
 
@@ -741,7 +794,10 @@ final class VaultStore: ObservableObject {
             wipeSensitiveMemory()
             currentEnvelope = envelope
             phase = .locked
-            errorMessage = "验证期间应用进入后台或设备已锁屏，已自动中止本次解锁，请重新验证"
+            errorMessage = tr(
+                "验证期间应用进入后台或设备已锁屏，已自动中止本次解锁，请重新验证",
+                "Unlock aborted because the app entered background or the device locked during verification. Please try again."
+            )
             return false
         }
 
@@ -752,11 +808,17 @@ final class VaultStore: ObservableObject {
         var notices: [String] = []
 
         if runtimeIntegrity.isCompromised {
-            notices.append("运行时完整性告警：\(runtimeIntegrity.summaryText)。请勿在被注入插件或越狱的环境中保存银行卡！")
+            notices.append(tr(
+                "运行时完整性告警：\(runtimeIntegrity.summaryText)。请勿在被注入插件或越狱的环境中保存银行卡！",
+                "Runtime Integrity Alert: \(runtimeIntegrity.summaryText). Do not store bank cards in a tampered or jailbroken environment!"
+            ))
         }
 
         if priorFailedAttempts > 0 {
-            notices.append("在本次解锁前曾发生 \(priorFailedAttempts) 次主密码验证失败。如非您本人误输，请警惕他人曾接触您的手机。")
+            notices.append(tr(
+                "在本次解锁前曾发生 \(priorFailedAttempts) 次主密码验证失败。如非您本人误输，请警惕他人曾接触您的手机。",
+                "\(priorFailedAttempts) failed master password attempt(s) occurred before this unlock. If that wasn't you, someone may have accessed your iPhone."
+            ))
         }
 
         // Anti-replacement & anti-rollback verification against Keychain VaultIdentityStore.
@@ -765,9 +827,15 @@ final class VaultStore: ObservableObject {
         case .found(let recorded):
             currentGeneration = max(payload.generation, recorded.generation)
             if let expectedID = recorded.vaultID, let actualID = envelope.vaultID, expectedID != actualID {
-                notices.append("严重警告：本地加密文件的唯一标识（Vault ID）与本机钥匙串记录不符，文件可能曾被整体替换！")
+                notices.append(tr(
+                    "严重警告：本地加密文件的唯一标识（Vault ID）与本机钥匙串记录不符，文件可能曾被整体替换！",
+                    "Critical Warning: Local vault ID does not match Keychain records. The vault file may have been replaced!"
+                ))
             } else if payload.generation < recorded.generation {
-                notices.append("严重警告：本地加密文件版本（第 \(payload.generation) 版）旧于本机钥匙串记录（第 \(recorded.generation) 版），疑似遭遇文件回滚攻击！")
+                notices.append(tr(
+                    "严重警告：本地加密文件版本（第 \(payload.generation) 版）旧于本机钥匙串记录（第 \(recorded.generation) 版），疑似遭遇文件回滚攻击！",
+                    "Critical Warning: Vault file revision (\(payload.generation)) is older than Keychain record (\(recorded.generation)). Possible file rollback attack!"
+                ))
             } else {
                 VaultIdentityStore.advanceWatermark(
                     VaultIdentityRecord(
@@ -788,9 +856,15 @@ final class VaultStore: ObservableObject {
                 using: stateBackend
             )
         case .corrupted:
-            notices.append("严重警告：系统钥匙串中的防回滚身份记录格式异常，疑似曾遭篡改！")
+            notices.append(tr(
+                "严重警告：系统钥匙串中的防回滚身份记录格式异常，疑似曾遭篡改！",
+                "Critical Warning: Keychain anti-rollback identity record is corrupted (possible tampering)!"
+            ))
         case .unavailable:
-            notices.append("安全提醒：系统钥匙串防回滚状态在激活瞬间暂不可读。")
+            notices.append(tr(
+                "安全提醒：系统钥匙串防回滚状态在激活瞬间暂不可读。",
+                "Security Notice: Keychain anti-rollback state was temporarily unreadable during unlock."
+            ))
         }
 
         if !notices.isEmpty {
@@ -804,9 +878,16 @@ final class VaultStore: ObservableObject {
 
     private static func lockoutMessage(_ seconds: Int) -> String {
         if seconds >= 60 {
-            return "密码错误次数过多，面容/触控 ID 已挂起，请在 \(Int(ceil(Double(seconds) / 60))) 分钟后用主密码重试"
+            let mins = Int(ceil(Double(seconds) / 60))
+            return tr(
+                "密码错误次数过多，面容/触控 ID 已挂起，请在 \(mins) 分钟后用主密码重试",
+                "Too many failed attempts. Biometrics suspended; retry with your master password in \(mins) min(s)."
+            )
         }
-        return "密码错误次数过多，面容/触控 ID 已挂起，请在 \(seconds) 秒后用主密码重试"
+        return tr(
+            "密码错误次数过多，面容/触控 ID 已挂起，请在 \(seconds) 秒后用主密码重试",
+            "Too many failed attempts. Biometrics suspended; retry with your master password in \(seconds)s."
+        )
     }
 
     // MARK: - Card CRUD
@@ -871,7 +952,10 @@ final class VaultStore: ObservableObject {
             ),
             using: stateBackend
         ) {
-            securityNotice = "安全提醒：卡片已保存，但防回滚版本水位写入系统钥匙串失败，将在下次保存时自动重试。"
+            securityNotice = tr(
+                "安全提醒：卡片已保存，但防回滚版本水位写入系统钥匙串失败，将在下次保存时自动重试。",
+                "Security Notice: Card saved, but updating the anti-rollback revision in Keychain failed. It will retry on next save."
+            )
         }
         cards = updatedCards
         noteActivity()
@@ -882,17 +966,26 @@ final class VaultStore: ObservableObject {
     func setBiometricUnlock(enabled: Bool) -> Bool {
         if enabled {
             guard !runtimeIntegrity.isCompromised else {
-                errorMessage = "当前运行环境存在注入或调试风险，已禁止启用生物识别解锁"
+                errorMessage = tr(
+                    "当前运行环境存在注入或调试风险，已禁止启用生物识别解锁",
+                    "Biometric unlock is disabled due to runtime injection or debugger risk"
+                )
                 biometricsEnabled = false
                 return false
             }
             guard biometricKind != .none else {
-                errorMessage = "当前设备未开启或不支持面容/触控 ID"
+                errorMessage = tr(
+                    "当前设备未开启或不支持面容/触控 ID",
+                    "Face ID / Touch ID is unavailable or not enabled on this device"
+                )
                 biometricsEnabled = false
                 return false
             }
             guard let key = activeKey else {
-                errorMessage = "请先解锁卡包后再开启生物识别"
+                errorMessage = tr(
+                    "请先解锁卡包后再开启生物识别",
+                    "Unlock the vault before enabling biometrics"
+                )
                 biometricsEnabled = false
                 return false
             }
@@ -942,7 +1035,10 @@ final class VaultStore: ObservableObject {
 
         let priorRecord = lockout.record
         guard lockout.beginAttempt() else {
-            errorMessage = "安全计数器无法写入系统钥匙串，已中止敏感操作验证"
+            errorMessage = tr(
+                "安全计数器无法写入系统钥匙串，已中止敏感操作验证",
+                "Unable to persist attempt counter to Keychain. Sensitive verification aborted."
+            )
             return false
         }
 
@@ -971,7 +1067,10 @@ final class VaultStore: ObservableObject {
 
             if wipeAfterFailedAttempts && failures >= LockoutPolicy.wipeThreshold {
                 destroyVaultCompletely()
-                errorMessage = "主密码已连续输错 \(failures) 次，已按设置触发硬件密钥销毁并擦除本机卡包。"
+                errorMessage = tr(
+                    "主密码已连续输错 \(failures) 次，已按设置触发硬件密钥销毁并擦除本机卡包。",
+                    "Master password failed \(failures) consecutive times. Hardware key destroyed and local vault erased per policy."
+                )
                 return false
             }
 
@@ -980,7 +1079,10 @@ final class VaultStore: ObservableObject {
             if wait > 0 {
                 message += "\n" + Self.lockoutMessage(wait)
             } else if failures >= 3 {
-                message += "\n已连续输错 \(failures) 次，第 \(LockoutPolicy.biometricSuspensionThreshold) 次起将强制锁定会话并递增冷却时间"
+                message += tr(
+                    "\n已连续输错 \(failures) 次，第 \(LockoutPolicy.biometricSuspensionThreshold) 次起将强制锁定会话并递增冷却时间",
+                    "\n\(failures) consecutive failed attempts. Session locks and backoff escalates starting at attempt \(LockoutPolicy.biometricSuspensionThreshold)."
+                )
             }
 
             // Kick opportunistic attacker out of unlocked session once brute-force threshold engages!
@@ -1010,7 +1112,7 @@ final class VaultStore: ObservableObject {
             return false
         }
         guard isSessionStillValid(since: startedEpoch), phase == .unlocked else {
-            errorMessage = "验证期间会话已锁定，主密码未修改"
+            errorMessage = tr("验证期间会话已锁定，主密码未修改", "Session locked during verification; master password unchanged")
             return false
         }
 
@@ -1050,7 +1152,7 @@ final class VaultStore: ObservableObject {
             // (nothing has been written yet), so a fresh DEK is never left resident in memory after a lock.
             guard isSessionStillValid(since: startedEpoch), phase == .unlocked else {
                 keys.discardPendingKey()
-                errorMessage = "重加密期间会话已锁定，已安全中止，主密码未修改"
+                errorMessage = tr("重加密期间会话已锁定，已安全中止，主密码未修改", "Session locked during re-encryption. Aborted safely; master password unchanged.")
                 return false
             }
 
@@ -1067,7 +1169,10 @@ final class VaultStore: ObservableObject {
                 ),
                 using: stateBackend
             ) {
-                securityNotice = "安全提醒：主密码已更新，但防回滚版本水位写入系统钥匙串失败，将在下次保存时自动重试。"
+                securityNotice = tr(
+                    "安全提醒：主密码已更新，但防回滚版本水位写入系统钥匙串失败，将在下次保存时自动重试。",
+                    "Security Notice: Master password updated, but updating the anti-rollback revision in Keychain failed. It will retry on next save."
+                )
             }
 
             if biometricsEnabled && biometricKind != .none && !runtimeIntegrity.isCompromised {
@@ -1075,7 +1180,10 @@ final class VaultStore: ObservableObject {
                     try KeychainBiometrics.saveBiometricDEK(rotated.key)
                 } catch {
                     biometricsEnabled = false
-                    securityNotice = "主密码已更新，但重新绑定生物识别密钥失败，已自动关闭快捷解锁，您可在安全设置中重新开启。"
+                    securityNotice = tr(
+                        "主密码已更新，但重新绑定生物识别密钥失败，已自动关闭快捷解锁，您可在安全设置中重新开启。",
+                        "Master password updated, but re-enrolling the biometric key failed. Quick unlock has been disabled; you can re-enable it in Security Settings."
+                    )
                 }
             }
             return true
@@ -1096,13 +1204,19 @@ final class VaultStore: ObservableObject {
             throw VaultCryptoError.authenticationFailed
         }
         if currentMasterPassword.isEmpty {
-            throw VaultCryptoError.weakPassword("请先输入当前本机主密码以授权导出离线备份")
+            throw VaultCryptoError.weakPassword(tr(
+                "请先输入当前本机主密码以授权导出离线备份",
+                "Enter your current master password to authorize offline backup export"
+            ))
         }
         if let message = PasswordPolicy.validationMessage(backupPassword, for: .backup) {
             throw VaultCryptoError.weakPassword(message)
         }
         if VaultCrypto.normalizePassword(currentMasterPassword) == VaultCrypto.normalizePassword(backupPassword) {
-            throw VaultCryptoError.weakPassword("备份密码不能与本机主密码相同：备份文件一旦外泄被破解，本机主密码也会随之暴露。")
+            throw VaultCryptoError.weakPassword(tr(
+                "备份密码不能与本机主密码相同：备份文件一旦外泄被破解，本机主密码也会随之暴露。",
+                "Backup password cannot match your master password: if the backup leaks and is cracked, your local master password would be exposed too."
+            ))
         }
         guard phase == .unlocked, let envelope = currentEnvelope else {
             throw VaultCryptoError.authenticationFailed
@@ -1174,7 +1288,10 @@ final class VaultStore: ObservableObject {
                 addedCount += 1
             }
             guard merged.count <= Self.maximumImportedCardCount * 2 else {
-                throw VaultCryptoError.weakPassword("合并后卡片数量超过安全上限，已拒绝导入")
+                throw VaultCryptoError.weakPassword(tr(
+                    "合并后卡片数量超过安全上限，已拒绝导入",
+                    "Merged card count exceeds safety limit. Import refused."
+                ))
             }
             try saveCards(merged)
             return addedCount
@@ -1192,7 +1309,10 @@ final class VaultStore: ObservableObject {
         errorMessage = nil
 
         if VaultCrypto.normalizePassword(backupPassword) == VaultCrypto.normalizePassword(newMasterPassword) {
-            errorMessage = "新主密码不能与备份文件的密码相同，请设置一个独立的主密码"
+            errorMessage = tr(
+                "新主密码不能与备份文件的密码相同，请设置一个独立的主密码",
+                "New master password cannot match the backup password. Choose a distinct master password."
+            )
             return false
         }
         if let message = PasswordPolicy.validationMessage(newMasterPassword, for: .master) {
@@ -1228,7 +1348,10 @@ final class VaultStore: ObservableObject {
     /// freezing the UI or exhausting memory with oversized fields.
     static func sanitizeImportedCards(_ input: [BankCard]) throws -> [BankCard] {
         guard input.count <= maximumImportedCardCount else {
-            throw VaultCryptoError.weakPassword("备份内卡片数量超过 \(maximumImportedCardCount) 张安全上限，已拒绝导入")
+            throw VaultCryptoError.weakPassword(tr(
+                "备份内卡片数量超过 \(maximumImportedCardCount) 张安全上限，已拒绝导入",
+                "Backup exceeds the \(maximumImportedCardCount)-card safety limit. Import refused."
+            ))
         }
         func cap(_ value: String, _ limit: Int) -> String {
             value.count > limit ? String(value.prefix(limit)) : value
@@ -1276,7 +1399,10 @@ final class VaultStore: ObservableObject {
         let values = try? url.resourceValues(forKeys: [.isUbiquitousItemKey])
         let pathLower = url.path.lowercased()
         if values?.isUbiquitousItem == true || pathLower.contains("mobile documents") || pathLower.contains("icloud") {
-            securityNotice = "离线安全提醒：您刚刚选择的路径位于 iCloud 云同步目录中，系统可能会在后台将其同步到云端服务器。为确保零云端同步，强烈建议将备份移至「我的 iPhone」本地目录或离线硬件 U 盘，并彻底删除云端副本。"
+            securityNotice = tr(
+                "离线安全提醒：您刚刚选择的路径位于 iCloud 云同步目录中，系统可能会在后台将其同步到云端服务器。为确保零云端同步，强烈建议将备份移至「我的 iPhone」本地目录或离线硬件 U 盘，并彻底删除云端副本。",
+                "Offline Security Reminder: The selected location is inside iCloud Drive and may sync to Apple servers in the background. To maintain zero cloud sync, move the backup to \"On My iPhone\" or an offline USB drive and permanently delete the cloud copy."
+            )
         }
     }
 
@@ -1286,7 +1412,7 @@ final class VaultStore: ObservableObject {
         if rejectIfDebuggerAttached() { return false }
         guard !isBusy, phase == .unlocked, let envelope = currentEnvelope else { return false }
         guard !masterPassword.isEmpty else {
-            errorMessage = "请输入当前主密码授权销毁"
+            errorMessage = tr("请输入当前主密码授权销毁", "Enter your current master password to authorize destruction")
             return false
         }
         errorMessage = nil
@@ -1393,7 +1519,10 @@ final class VaultStore: ObservableObject {
             clipboard.clearIfOwned()
             KeychainBiometrics.deleteBiometricDEK()
             lock(reason: .securityAnomaly)
-            securityNotice = "检测到外部调试器附加，已立即销毁内存会话并锁定 Enkard。"
+            securityNotice = tr(
+                "检测到外部调试器附加，已立即销毁内存会话并锁定 Enkard。",
+                "External debugger detected. Memory session wiped and Enkard locked."
+            )
             return
         }
         #endif
@@ -1407,7 +1536,10 @@ final class VaultStore: ObservableObject {
             runtimeIntegrity = latestIntegrity
             if newlyCompromised {
                 KeychainBiometrics.deleteBiometricDEK()
-                securityNotice = "运行时完整性告警：\(latestIntegrity.summaryText)。已立即撤销生物识别快捷解锁！"
+                securityNotice = tr(
+                    "运行时完整性告警：\(latestIntegrity.summaryText)。已立即撤销生物识别快捷解锁！",
+                    "Runtime Integrity Alert: \(latestIntegrity.summaryText). Biometric quick unlock has been revoked!"
+                )
             }
         }
 
@@ -1421,9 +1553,15 @@ final class VaultStore: ObservableObject {
         screenshotEventCount += 1
         guard phase == .unlocked else { return }
         if SecureCanvasSupport.isAvailable {
-            securityNotice = "检测到截屏。卡面、卡号、CVV、有效期与备注区域已由安全图层渲染为空白，明文状态也已立即收起。仍建议前往「照片」删除该截图并清空「最近删除」（防止相册云同步）。"
+            securityNotice = tr(
+                "检测到截屏。卡面、卡号、CVV、有效期与备注区域已由安全图层渲染为空白，明文状态也已立即收起。仍建议前往「照片」删除该截图并清空「最近删除」（防止相册云同步）。",
+                "Screenshot detected. Card artwork, numbers, CVV, expiry, and notes were blanked by the secure canvas layer, and plaintext view was collapsed. Delete the screenshot in Photos and empty Recently Deleted to prevent cloud photo sync."
+            )
         } else {
-            securityNotice = "检测到截屏，明文已自动隐藏。当前系统版本不支持安全图层遮挡，请立即前往「照片」删除该截图并清空「最近删除」。"
+            securityNotice = tr(
+                "检测到截屏，明文已自动隐藏。当前系统版本不支持安全图层遮挡，请立即前往「照片」删除该截图并清空「最近删除」。",
+                "Screenshot detected and plaintext hidden. Secure canvas redaction is unavailable on this OS version; delete the screenshot in Photos and empty Recently Deleted immediately."
+            )
         }
     }
 

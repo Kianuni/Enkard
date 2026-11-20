@@ -451,6 +451,42 @@ struct VaultPreferences: Codable, Equatable, Sendable {
     var idleLockTimeoutRaw: Int = 180     // IdleLockTimeout.minutes3
     var clipboardClearDurationRaw: Int = 15 // ClipboardClearDuration.seconds15
     var wipeAfterFailedAttempts: Bool = false
+    var languageModeRaw: String = AppLanguageMode.system.rawValue
+
+    init(
+        biometricsEnabled: Bool = false,
+        autoLockTimeoutRaw: Int = 0,
+        idleLockTimeoutRaw: Int = 180,
+        clipboardClearDurationRaw: Int = 15,
+        wipeAfterFailedAttempts: Bool = false,
+        languageModeRaw: String = AppLanguageMode.system.rawValue
+    ) {
+        self.biometricsEnabled = biometricsEnabled
+        self.autoLockTimeoutRaw = autoLockTimeoutRaw
+        self.idleLockTimeoutRaw = idleLockTimeoutRaw
+        self.clipboardClearDurationRaw = clipboardClearDurationRaw
+        self.wipeAfterFailedAttempts = wipeAfterFailedAttempts
+        self.languageModeRaw = languageModeRaw
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case biometricsEnabled
+        case autoLockTimeoutRaw
+        case idleLockTimeoutRaw
+        case clipboardClearDurationRaw
+        case wipeAfterFailedAttempts
+        case languageModeRaw
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        biometricsEnabled = try container.decodeIfPresent(Bool.self, forKey: .biometricsEnabled) ?? false
+        autoLockTimeoutRaw = try container.decodeIfPresent(Int.self, forKey: .autoLockTimeoutRaw) ?? 0
+        idleLockTimeoutRaw = try container.decodeIfPresent(Int.self, forKey: .idleLockTimeoutRaw) ?? 180
+        clipboardClearDurationRaw = try container.decodeIfPresent(Int.self, forKey: .clipboardClearDurationRaw) ?? 15
+        wipeAfterFailedAttempts = try container.decodeIfPresent(Bool.self, forKey: .wipeAfterFailedAttempts) ?? false
+        languageModeRaw = try container.decodeIfPresent(String.self, forKey: .languageModeRaw) ?? AppLanguageMode.system.rawValue
+    }
 }
 
 enum VaultPreferencesStore {

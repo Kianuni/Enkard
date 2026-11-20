@@ -42,10 +42,17 @@ struct CardEditorView: View {
 
     @State private var validationError: String? = nil
 
-    private let commonBanks = [
-        "招商银行", "工商银行", "建设银行", "中国银行", "农业银行",
-        "交通银行", "中信银行", "平安银行", "浦发银行", "广发银行", "兴业银行"
-    ]
+    private var commonBanks: [String] {
+        L10n.isEnglish
+            ? [
+                "Chase", "Citi", "Amex", "HSBC", "Bank of America",
+                "Capital One", "Standard Chartered", "Barclays", "CMB", "ICBC", "BOC"
+            ]
+            : [
+                "招商银行", "工商银行", "建设银行", "中国银行", "农业银行",
+                "交通银行", "中信银行", "平安银行", "浦发银行", "广发银行", "兴业银行"
+            ]
+    }
 
     private var previewCard: BankCard {
         BankCard(
@@ -81,7 +88,9 @@ struct CardEditorView: View {
                             toggleSecurePreview()
                         } label: {
                             Label(
-                                revealInSecurePreview ? "隐藏安全预览卡面明文" : "在防截屏卡面上核对完整卡号与 CVV（8秒自动收起）",
+                                revealInSecurePreview
+                                    ? tr("隐藏安全预览卡面明文", "Hide Preview Card Details")
+                                    : tr("在防截屏卡面上核对完整卡号与 CVV（8秒自动收起）", "Verify Full Number & CVV on Secure Card (Auto-hides in 8s)"),
                                 systemImage: revealInSecurePreview ? "eye.slash.fill" : "eye.fill"
                             )
                             .font(.caption.weight(.medium))
@@ -97,9 +106,9 @@ struct CardEditorView: View {
                 }
 
                 // Core Card Details
-                Section("核心卡面信息（禁输入法同步与写作工具）") {
+                Section(tr("核心卡面信息（禁输入法同步与写作工具）", "Core Card Details (Keyboard Learning & AI Disabled)")) {
                     VStack(alignment: .leading, spacing: 8) {
-                        TextField("发卡银行（如：招商银行）", text: $bankName)
+                        TextField(tr("发卡银行（如：招商银行）", "Issuing Bank (e.g. Chase, CMB)"), text: $bankName)
                             .lockdownTextInput()
                             .onValueChange(of: bankName) { val in
                                 if val.count > BankCard.maxBankNameLength {
@@ -128,7 +137,7 @@ struct CardEditorView: View {
                         }
                     }
 
-                    TextField("卡片别名（选填，如：全币种海淘卡）", text: $nickname)
+                    TextField(tr("卡片别名（选填，如：全币种海淘卡）", "Nickname (Optional, e.g. Travel Rewards)"), text: $nickname)
                         .lockdownTextInput()
                         .onValueChange(of: nickname) { val in
                             if val.count > BankCard.maxNicknameLength {
@@ -138,7 +147,10 @@ struct CardEditorView: View {
 
                     // Card Number: SecureField by default so screenshots cannot capture full PAN in the form!
                     VStack(alignment: .leading, spacing: 6) {
-                        SecureField("输入银行卡号（13–19 位纯数字，上方安全卡面可核对）", text: $cardNumberDigits)
+                        SecureField(
+                            tr("输入银行卡号（13–19 位纯数字，上方安全卡面可核对）", "Card Number (13–19 digits; verify via preview above)"),
+                            text: $cardNumberDigits
+                        )
                             .keyboardType(.numberPad)
                             .lockdownTextInput()
                             .focused($cardNumberFocused)
@@ -156,11 +168,17 @@ struct CardEditorView: View {
 
                         if cardNumberDigits.count >= 13 {
                             if LuhnValidator.isValid(cardNumberDigits) {
-                                Label("Luhn 卡号校验位通过（\(cardNumberDigits.count) 位）", systemImage: "checkmark.circle.fill")
+                                Label(
+                                    tr("Luhn 卡号校验位通过（\(cardNumberDigits.count) 位）", "Luhn check passed (\(cardNumberDigits.count) digits)"),
+                                    systemImage: "checkmark.circle.fill"
+                                )
                                     .font(.caption2)
                                     .foregroundStyle(.green)
                             } else {
-                                Label("卡号校验位异常，请点击上方安全预览核对是否输错数字", systemImage: "exclamationmark.triangle.fill")
+                                Label(
+                                    tr("卡号校验位异常，请点击上方安全预览核对是否输错数字", "Luhn check failed — tap secure preview above to verify digits"),
+                                    systemImage: "exclamationmark.triangle.fill"
+                                )
                                     .font(.caption2)
                                     .foregroundStyle(.orange)
                             }
@@ -168,7 +186,7 @@ struct CardEditorView: View {
                     }
 
                     HStack(spacing: 12) {
-                        Text("有效期")
+                        Text(tr("有效期", "Expiry"))
                             .foregroundStyle(.secondary)
                         Spacer()
                         SecureField("MM", text: $expiryMonth)
@@ -200,7 +218,7 @@ struct CardEditorView: View {
                     }
 
                     // CVV is strictly a SecureField (never downgraded to plain TextField!)
-                    SecureField("安全码 CVV（卡背面末 3 位，运通 4 位）", text: $cvv)
+                    SecureField(tr("安全码 CVV（卡背面末 3 位，运通 4 位）", "CVV / Security Code (3 digits, 4 for Amex)"), text: $cvv)
                         .keyboardType(.numberPad)
                         .lockdownTextInput()
                         .font(.system(.body, design: .monospaced))
@@ -208,7 +226,7 @@ struct CardEditorView: View {
                             cvv = String(val.filter(\.isWholeNumber).prefix(4))
                         }
 
-                    TextField("持卡人英文/拼音（选填，如 SAN ZHANG）", text: $cardholderName)
+                    TextField(tr("持卡人英文/拼音（选填，如 SAN ZHANG）", "Cardholder Name (Optional, e.g. JOHN DOE)"), text: $cardholderName)
                         .lockdownTextInput(autocapitalization: .characters)
                         .onValueChange(of: cardholderName) { val in
                             if val.count > BankCard.maxCardholderNameLength {
@@ -218,14 +236,14 @@ struct CardEditorView: View {
                 }
 
                 // Classification & Card Theme
-                Section("卡种与外观配色") {
-                    Picker("卡片类型", selection: $cardType) {
+                Section(tr("卡种与外观配色", "Category & Metallic Finish")) {
+                    Picker(tr("卡片类型", "Card Type"), selection: $cardType) {
                         ForEach(CardType.allCases) { type in
                             Text(type.title).tag(type)
                         }
                     }
 
-                    Picker("卡组织", selection: $network) {
+                    Picker(tr("卡组织", "Network"), selection: $network) {
                         ForEach(CardNetwork.allCases) { net in
                             Text(net.badgeText).tag(net)
                         }
@@ -235,7 +253,7 @@ struct CardEditorView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("卡面金属配色：\(theme.title)")
+                        Text(tr("卡面金属配色：\(theme.title)", "Metallic Finish: \(theme.title)"))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
@@ -269,20 +287,20 @@ struct CardEditorView: View {
                         }
                     }
 
-                    Toggle("设为收藏置顶卡片", isOn: $isFavorite)
+                    Toggle(tr("设为收藏置顶卡片", "Pin to Favorites"), isOn: $isFavorite)
                 }
 
                 // Optional Overseas Billing & Statement Info
                 Section {
-                    DisclosureGroup("海淘账单地址、账单日与备注（选填）", isExpanded: $showExtendedFields) {
-                        TextField("海淘账单地址 (Billing Address)", text: $billingAddress)
+                    DisclosureGroup(tr("海淘账单地址、账单日与备注（选填）", "Billing Address, Statement Cycle & Notes (Optional)"), isExpanded: $showExtendedFields) {
+                        TextField(tr("海淘账单地址 (Billing Address)", "Billing Address"), text: $billingAddress)
                             .lockdownTextInput()
                             .onValueChange(of: billingAddress) { val in
                                 if val.count > BankCard.maxBillingAddressLength {
                                     billingAddress = String(val.prefix(BankCard.maxBillingAddressLength))
                                 }
                             }
-                        TextField("账单邮编 (ZIP / Postal Code)", text: $postalCode)
+                        TextField(tr("账单邮编 (ZIP / Postal Code)", "ZIP / Postal Code"), text: $postalCode)
                             .keyboardType(.asciiCapable)
                             .lockdownTextInput()
                             .onValueChange(of: postalCode) { val in
@@ -293,13 +311,13 @@ struct CardEditorView: View {
 
                         if !pin.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
-                                Label("这张卡包含旧版遗留的交易 PIN", systemImage: "exclamationmark.triangle.fill")
+                                Label(tr("这张卡包含旧版遗留的交易 PIN", "This card has a legacy PIN stored"), systemImage: "exclamationmark.triangle.fill")
                                     .font(.subheadline.weight(.medium))
                                     .foregroundStyle(.orange)
-                                Text("线下刷卡/取现 PIN 不应与线上 CVV 共同保存。强烈建议立即清除。")
+                                Text(tr("线下刷卡/取现 PIN 不应与线上 CVV 共同保存。强烈建议立即清除。", "ATM/offline PINs should not be stored alongside online CVV. Removing it is strongly recommended."))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                Button("清除已保存的 PIN", role: .destructive) {
+                                Button(tr("清除已保存的 PIN", "Clear Stored PIN"), role: .destructive) {
                                     pin = ""
                                 }
                                 .font(.subheadline)
@@ -307,7 +325,7 @@ struct CardEditorView: View {
                             .padding(.vertical, 4)
                         }
 
-                        SecureField("银行预留手机号后四位", text: $phoneLast4)
+                        SecureField(tr("银行预留手机号后四位", "Registered Phone Last 4 Digits"), text: $phoneLast4)
                             .keyboardType(.numberPad)
                             .lockdownTextInput()
                             .onValueChange(of: phoneLast4) { val in
@@ -315,9 +333,9 @@ struct CardEditorView: View {
                             }
 
                         HStack {
-                            Text("每月账单日")
+                            Text(tr("每月账单日", "Statement Day"))
                             Spacer()
-                            TextField("如 5", text: $statementDayString)
+                            TextField(tr("如 5", "e.g. 5"), text: $statementDayString)
                                 .keyboardType(.numberPad)
                                 .lockdownTextInput()
                                 .multilineTextAlignment(.trailing)
@@ -328,9 +346,9 @@ struct CardEditorView: View {
                         }
 
                         HStack {
-                            Text("每月还款日")
+                            Text(tr("每月还款日", "Due Day"))
                             Spacer()
-                            TextField("如 23", text: $dueDayString)
+                            TextField(tr("如 23", "e.g. 23"), text: $dueDayString)
                                 .keyboardType(.numberPad)
                                 .lockdownTextInput()
                                 .multilineTextAlignment(.trailing)
@@ -340,14 +358,14 @@ struct CardEditorView: View {
                                 }
                         }
 
-                        TextField("授信额度 / 币种（如 50,000 CNY）", text: $creditLimit)
+                        TextField(tr("授信额度 / 币种（如 50,000 CNY）", "Credit Limit / Currency (e.g. $10,000 USD)"), text: $creditLimit)
                             .lockdownTextInput()
                             .onValueChange(of: creditLimit) { val in
                                 if val.count > BankCard.maxCreditLimitLength {
                                     creditLimit = String(val.prefix(BankCard.maxCreditLimitLength))
                                 }
                             }
-                        SecureField("安全备注（保存后默认打码）", text: $notes)
+                        SecureField(tr("安全备注（保存后默认打码）", "Secure Notes (Masked by default)"), text: $notes)
                             .lockdownTextInput()
                             .onValueChange(of: notes) { val in
                                 if val.count > BankCard.maxNotesLength {
@@ -365,17 +383,17 @@ struct CardEditorView: View {
                     }
                 }
             }
-            .navigationTitle(existingCard == nil ? "添加银行卡" : "编辑银行卡")
+            .navigationTitle(existingCard == nil ? tr("添加银行卡", "Add Card") : tr("编辑银行卡", "Edit Card"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+                    Button(tr("取消", "Cancel")) {
                         scrubState()
                         dismiss()
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("硬件加密保存") {
+                    Button(tr("硬件加密保存", "Encrypt & Save")) {
                         saveCard()
                     }
                     .fontWeight(.semibold)
@@ -481,7 +499,7 @@ struct CardEditorView: View {
 
         if !expiryMonth.isEmpty {
             guard let m = Int(expiryMonth), (1...12).contains(m) else {
-                validationError = "有效期月份需在 01 到 12 之间"
+                validationError = tr("有效期月份需在 01 到 12 之间", "Expiry month must be between 01 and 12")
                 return
             }
         }

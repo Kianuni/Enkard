@@ -49,7 +49,7 @@ struct CardVisualView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
-                            Text(card.bankName.isEmpty ? "发卡银行" : card.bankName)
+                            Text(card.bankName.isEmpty ? tr("发卡银行", "ISSUING BANK") : card.bankName)
                                 .font(.system(size: 18, weight: .bold, design: .rounded))
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
@@ -89,14 +89,14 @@ struct CardVisualView: View {
                     Spacer()
 
                     if card.expiryStatus == .expired {
-                        Text("已过期")
+                        Text(tr("已过期", "EXPIRED"))
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(Color.red.opacity(0.82), in: Capsule())
                     } else if card.expiryStatus == .expiringSoon {
-                        Text("即将到期")
+                        Text(tr("即将到期", "EXPIRING SOON"))
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(.black)
                             .padding(.horizontal, 8)

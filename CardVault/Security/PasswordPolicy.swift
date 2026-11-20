@@ -20,7 +20,9 @@ struct PasswordAssessment: Equatable, Sendable {
     }
 
     var label: String {
-        ["极弱", "弱", "中等", "强", "极强"][score]
+        L10n.isEnglish
+            ? ["Very Weak", "Weak", "Fair", "Strong", "Very Strong"][score]
+            : ["极弱", "弱", "中等", "强", "极强"][score]
     }
 }
 
@@ -35,9 +37,14 @@ enum PasswordPolicy {
     static let backupMinimumBits = 65.0
 
     static func validationMessage(_ rawPassword: String, for purpose: PasswordPurpose) -> String? {
-        let name = purpose == .master ? "主密码" : "备份密码"
+        let name = purpose == .master
+            ? tr("主密码", "Master password")
+            : tr("备份密码", "Backup password")
         if rawPassword.utf8.count > maximumPasswordLength * 4 {
-            return "\(name)长度不能超过 \(maximumPasswordLength) 位"
+            return tr(
+                "\(name)长度不能超过 \(maximumPasswordLength) 位",
+                "\(name) cannot exceed \(maximumPasswordLength) characters"
+            )
         }
 
         let password = VaultCrypto.normalizePassword(rawPassword)
@@ -45,27 +52,45 @@ enum PasswordPolicy {
         let minimumBits = purpose == .master ? masterMinimumBits : backupMinimumBits
 
         if password.count < minimumLength {
-            return "\(name)至少需要 \(minimumLength) 位"
+            return tr(
+                "\(name)至少需要 \(minimumLength) 位",
+                "\(name) must be at least \(minimumLength) characters"
+            )
         }
         if password.count > maximumPasswordLength {
-            return "\(name)长度不能超过 \(maximumPasswordLength) 位"
+            return tr(
+                "\(name)长度不能超过 \(maximumPasswordLength) 位",
+                "\(name) cannot exceed \(maximumPasswordLength) characters"
+            )
         }
 
         if containsDisallowedInvisibleOrControlScalar(password) {
-            return "\(name)包含不可见格式字符或控制字符，请手动重新输入可打印字符"
+            return tr(
+                "\(name)包含不可见格式字符或控制字符，请手动重新输入可打印字符",
+                "\(name) contains invisible formatting or control characters; please type printable characters manually"
+            )
         }
 
         let assessment = assess(password)
         guard assessment.estimatedBits < minimumBits else { return nil }
 
         if let warning = assessment.warnings.first {
-            return "\(name)太容易被猜到：\(warning)"
+            return tr(
+                "\(name)太容易被猜到：\(warning)",
+                "\(name) is too easy to guess: \(warning)"
+            )
         }
         switch purpose {
         case .master:
-            return "主密码强度不足（需达到约 \(Int(minimumBits)) bit），请增加长度或混合大小写字母、数字与符号"
+            return tr(
+                "主密码强度不足（需达到约 \(Int(minimumBits)) bit），请增加长度或混合大小写字母、数字与符号",
+                "Master password is too weak (requires ~\(Int(minimumBits)) bits). Add length or mix uppercase, lowercase, digits, and symbols."
+            )
         case .backup:
-            return "备份文件可被离线无限次暴力破解，请使用更长口令（强烈推荐使用随机恢复口令）"
+            return tr(
+                "备份文件可被离线无限次暴力破解，请使用更长口令（强烈推荐使用随机恢复口令）",
+                "Backup files can be brute-forced offline indefinitely. Use a stronger passphrase (random recovery passphrase strongly recommended)."
+            )
         }
     }
 
@@ -73,18 +98,30 @@ enum PasswordPolicy {
         if rawPassword.utf8.count > maximumPasswordLength * 4 {
             return PasswordAssessment(
                 estimatedBits: 0,
-                warnings: ["密码长度超出安全上限（最多 \(maximumPasswordLength) 位）"]
+                warnings: [tr(
+                    "密码长度超出安全上限（最多 \(maximumPasswordLength) 位）",
+                    "Password exceeds maximum length (\(maximumPasswordLength) characters)"
+                )]
             )
         }
         let normalizedInput = VaultCrypto.normalizePassword(rawPassword)
         if normalizedInput.count > maximumPasswordLength {
             return PasswordAssessment(
                 estimatedBits: 0,
-                warnings: ["密码长度超出安全上限（最多 \(maximumPasswordLength) 位）"]
+                warnings: [tr(
+                    "密码长度超出安全上限（最多 \(maximumPasswordLength) 位）",
+                    "Password exceeds maximum length (\(maximumPasswordLength) characters)"
+                )]
             )
         }
         if containsDisallowedInvisibleOrControlScalar(normalizedInput) {
-            return PasswordAssessment(estimatedBits: 0, warnings: ["包含不可见格式字符或控制字符"])
+            return PasswordAssessment(
+                estimatedBits: 0,
+                warnings: [tr(
+                    "包含不可见格式字符或控制字符",
+                    "Contains invisible formatting or control characters"
+                )]
+            )
         }
         let password = halfwidthNormalized(normalizedInput)
         guard !password.isEmpty else {
@@ -96,7 +133,13 @@ enum PasswordPolicy {
         if commonPasswords.contains(lowered)
             || commonPasswords.contains(lowered.replacingOccurrences(of: " ", with: ""))
             || (!strippedPunct.isEmpty && strippedPunct.count >= lowered.count - 2 && commonPasswords.contains(strippedPunct)) {
-            return PasswordAssessment(estimatedBits: 10, warnings: ["属于常见泄露弱密码（加标点也极易被字典规则猜中）"])
+            return PasswordAssessment(
+                estimatedBits: 10,
+                warnings: [tr(
+                    "属于常见泄露弱密码（加标点也极易被字典规则猜中）",
+                    "Common leaked password (still trivial to crack even with added punctuation)"
+                )]
+            )
         }
 
         let scalars = Array(password.unicodeScalars)
@@ -149,7 +192,10 @@ enum PasswordPolicy {
         let repeatCheck = repeatedBlockCompressedBits(scalars: scalars, asciiPoolBits: asciiPoolBits)
         if repeatCheck.hasRepeatedBlock && repeatCheck.bits < bits {
             bits = repeatCheck.bits
-            warnings.append("包含重复循环片段，实际抗破解强度远低于长度")
+            warnings.append(tr(
+                "包含重复循环片段，实际抗破解强度远低于长度",
+                "Contains repeated patterns, reducing effective cracking resistance"
+            ))
         }
 
         // Dictionary / pinyin / leet / date / phone / year segmentation model.
@@ -158,15 +204,18 @@ enum PasswordPolicy {
             bits = segmented.bits
         }
         if let word = segmented.words.first {
-            warnings.append("包含常见单词或拼音（\(word)），字典规则攻击会优先尝试")
+            warnings.append(tr(
+                "包含常见单词或拼音（\(word)），字典规则攻击会优先尝试",
+                "Contains a common word or pinyin (\(word)) targeted early by dictionary attacks"
+            ))
         }
         if segmented.hasDate {
-            warnings.append("包含完整生日或日期")
+            warnings.append(tr("包含完整生日或日期", "Contains a full date or birthday"))
         } else if segmented.hasYear {
-            warnings.append("包含年份")
+            warnings.append(tr("包含年份", "Contains a calendar year"))
         }
         if segmented.hasPhone {
-            warnings.append("包含手机号特征片段")
+            warnings.append(tr("包含手机号特征片段", "Contains a phone number pattern"))
         }
 
         // Inspect digit core even when wrapped in symbols/punctuation (e.g. `19900101。`, `@13812345678!`, `!@#19900101$%^`).
@@ -180,32 +229,32 @@ enum PasswordPolicy {
         if digitsExtracted.count >= 6 && nonDigitCount <= wrapperAllowance {
             if looksLikeDate(digitsExtracted) || looksLikeDate(String(digitsExtracted.prefix(8))) {
                 bits = min(bits, 18 + extraTailBits)
-                warnings.append("主体看起来像生日或日期")
+                warnings.append(tr("主体看起来像生日或日期", "Resembles a birthday or calendar date"))
             }
             if digitsExtracted.count == 11 && digitsExtracted.hasPrefix("1") {
                 bits = min(bits, 26 + extraTailBits)
-                warnings.append("主体看起来像手机号")
+                warnings.append(tr("主体看起来像手机号", "Resembles a mobile phone number"))
             }
             if digitsExtracted.count == 15 || digitsExtracted.count == 18 {
                 bits = min(bits, 26 + extraTailBits)
-                warnings.append("主体看起来像身份证号")
+                warnings.append(tr("主体看起来像身份证号", "Resembles a national ID number"))
             }
         }
 
         if let walk = keyboardWalks.first(where: { lowered.contains($0) }) {
             bits -= 12
-            warnings.append("包含键盘连续按键（\(walk)）")
+            warnings.append(tr("包含键盘连续按键（\(walk)）", "Contains keyboard sequence (\(walk))"))
         }
         if let fragment = commonFragments.first(where: { lowered.contains($0) }) {
             bits -= 12
-            warnings.append("包含常见弱密码片段（\(fragment)）")
+            warnings.append(tr("包含常见弱密码片段（\(fragment)）", "Contains weak password pattern (\(fragment))"))
         }
         if uniqueCount <= 3 {
             bits = min(bits, 20)
-            warnings.append("使用的字符种类太少")
+            warnings.append(tr("使用的字符种类太少", "Too few unique characters"))
         }
         if nonDigitCount == 0 && warnings.isEmpty {
-            warnings.append("纯数字密码很容易被暴力破解")
+            warnings.append(tr("纯数字密码很容易被暴力破解", "Digits-only passwords are easy to brute-force"))
         }
 
         return PasswordAssessment(estimatedBits: max(0, bits), warnings: warnings)

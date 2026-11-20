@@ -4,6 +4,16 @@ import XCTest
 @testable import Enkard
 
 final class VaultCryptoTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        L10n.setMode(.zhHans)
+    }
+
+    override func tearDown() {
+        L10n.setMode(.system)
+        super.tearDown()
+    }
+
     private let iterations = VaultCrypto.minimumNewIterations
     private let sampleCard = BankCard(
         bankName: "招商银行", nickname: "全币种海淘卡", cardType: .credit, network: .visa,
@@ -1396,6 +1406,145 @@ final class VaultCryptoTests: XCTestCase {
             canaryPayload,
             "Mid-session persistEnvelope must NEVER overwrite an external symlink target!"
         )
+    }
+
+    // MARK: - v2.4.0 Bilingual Localization & Zero-UserDefaults Persistence Suite
+
+    func testLanguageResolutionAndZeroCJKLeakInEnglishMode() {
+        XCTAssertEqual(L10n.resolveSystemLanguage(preferredLanguages: ["zh-Hans-CN", "en-US"]), .zhHans)
+        XCTAssertEqual(L10n.resolveSystemLanguage(preferredLanguages: ["zh-Hant-HK", "en"]), .zhHans)
+        XCTAssertEqual(L10n.resolveSystemLanguage(preferredLanguages: ["en-US", "zh-Hans"]), .en)
+        XCTAssertEqual(L10n.resolveSystemLanguage(preferredLanguages: ["ja-JP"]), .en)
+        XCTAssertEqual(L10n.resolveSystemLanguage(preferredLanguages: []), .zhHans)
+
+        func containsHan(_ s: String) -> Bool {
+            s.unicodeScalars.contains { scalar in
+                (0x4E00...0x9FFF).contains(scalar.value)
+                    || (0x3400...0x4DBF).contains(scalar.value)
+                    || (0xF900...0xFAFF).contains(scalar.value)
+            }
+        }
+
+        // 1. Switch to English and assert EVERY user-facing enum/error/policy surface has zero Han leakage.
+        L10n.setMode(.en)
+        XCTAssertTrue(L10n.isEnglish)
+        XCTAssertEqual(AppLanguageMode.system.displayTitle, "Follow System")
+
+        var englishSamples: [String] = []
+        englishSamples += CardType.allCases.map(\.title)
+        englishSamples += CardNetwork.allCases.flatMap { [$0.badgeText, $0.shortName] }
+        englishSamples += CardTheme.allCases.map(\.title)
+        englishSamples.append(BankCard(bankName: "", cardNumber: "4111111111111111").displayTitle)
+        englishSamples += IdleLockTimeout.allCases.map(\.title)
+        englishSamples += AutoLockTimeout.allCases.map(\.title)
+        englishSamples += ClipboardClearDuration.allCases.map(\.title)
+        englishSamples += BackupImportMode.allCases.map(\.title)
+        englishSamples += [
+            HardwareProtectionTier.secureEnclavePasscodeBound.displayTitle,
+            HardwareProtectionTier.secureEnclaveUnlockedBound.displayTitle,
+            HardwareProtectionTier.keychainDeviceBoundFallback.displayTitle
+        ]
+        let hwErrors: [HardwareKeyError] = [
+            .keyNotFound, .temporarilyUnavailable, .keyCreationFailed, .keyAgreementFailed, .invalidEphemeralPublicKey
+        ]
+        englishSamples += hwErrors.compactMap(\.errorDescription)
+        let bioKinds: [BiometricKind] = [.faceID, .touchID, .opticID, .none]
+        englishSamples += bioKinds.map(\.displayName)
+        let bioErrors: [KeychainBiometricError] = [
+            .biometricsUnavailable("Test reason"), .itemNotFound, .keychainFailure(-25300)
+        ]
+        englishSamples += bioErrors.compactMap(\.errorDescription)
+        let cryptoErrors: [VaultCryptoError] = [
+            .emptyPassword, .passwordTooShort(minimum: 8), .passwordTooLong(maximum: 256),
+            .randomGenerationFailed, .keyDerivationFailed, .invalidEnvelopeFormat,
+            .domainMismatch, .authenticationFailed, .corruptedPayload
+        ]
+        englishSamples += cryptoErrors.compactMap(\.errorDescription)
+
+        for sample in [
+            "12345678", "19900101。", "@13812345678!", "P@ssw0rd!", "Ab1!Ab1!",
+            "Ab1!\u{200B}Xy9#", "qwerty123!", String(repeating: "A", count: 300)
+        ] {
+            if let m = PasswordPolicy.validationMessage(sample, for: .master) { englishSamples.append(m) }
+            if let b = PasswordPolicy.validationMessage(sample, for: .backup) { englishSamples.append(b) }
+            let assessment = PasswordPolicy.assess(sample)
+            englishSamples.append(assessment.label)
+            englishSamples += assessment.warnings
+        }
+
+        englishSamples.append(RuntimeIntegrityReport.cleanInitial.summaryText)
+        englishSamples.append(
+            RuntimeIntegrityReport(
+                isCompromised: true,
+                antiDebugActive: false,
+                unexpectedLibraries: ["evil.dylib"],
+                anomalies: ["Test anomaly"]
+            ).summaryText
+        )
+
+        for text in englishSamples {
+            XCTAssertFalse(text.isEmpty)
+            XCTAssertFalse(containsHan(text), "Found CJK characters in English mode: \(text)")
+        }
+
+        // 2. Switch to Simplified Chinese and verify localized strings contain Chinese as expected.
+        L10n.setMode(.zhHans)
+        XCTAssertFalse(L10n.isEnglish)
+        XCTAssertEqual(AppLanguageMode.system.displayTitle, "跟随系统")
+        XCTAssertTrue(containsHan(CardType.credit.title))
+        XCTAssertTrue(containsHan(VaultCryptoError.authenticationFailed.errorDescription ?? ""))
+        XCTAssertTrue(containsHan(RuntimeIntegrityReport.cleanInitial.summaryText))
+    }
+
+    @MainActor
+    func testLanguagePreferenceKeychainPersistenceAndLegacyUpgrade() throws {
+        final class MemoryPrefsBackend: @unchecked Sendable, KeychainStateBackend {
+            var map: [String: Data] = [:]
+            func readResult(_ a: String) -> KeychainReadResult { map[a].map(KeychainReadResult.found) ?? .notFound }
+            func write(_ d: Data, account a: String) -> Bool { map[a] = d; return true }
+            func delete(_ a: String) { map.removeValue(forKey: a) }
+        }
+
+        let backend = MemoryPrefsBackend()
+        // Seed a legacy v2.3.3 EKM1-authenticated preferences blob without `languageModeRaw`.
+        let legacyJSON = Data(#"{"biometricsEnabled":true,"autoLockTimeoutRaw":15,"idleLockTimeoutRaw":300,"clipboardClearDurationRaw":30,"wipeAfterFailedAttempts":true}"#.utf8)
+        XCTAssertTrue(KeychainStateAuthenticator.writeAuthenticated(legacyJSON, account: "local_preferences_v2", using: backend))
+
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("enkard-lang-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let tempVaultURL = tempDir.appendingPathComponent("vault.cardse")
+
+        let store = VaultStore(
+            hardwareKeys: InMemoryHardwareKeyProvider(),
+            stateBackend: backend,
+            customVaultFileURL: tempVaultURL
+        )
+        store.bootstrapIfNeeded()
+
+        XCTAssertTrue(store.biometricsEnabled)
+        XCTAssertEqual(store.autoLockTimeout, .seconds15)
+        XCTAssertEqual(store.idleLockTimeout, .minutes5)
+        XCTAssertEqual(store.clipboardClearDuration, .seconds30)
+        XCTAssertTrue(store.wipeAfterFailedAttempts)
+        XCTAssertEqual(store.languageMode, .system)
+
+        let bundleID = Bundle.main.bundleIdentifier ?? ""
+        let appleLanguagesBefore = UserDefaults.standard.stringArray(forKey: "AppleLanguages")
+
+        // Switching language persists to EKM1 Keychain and NEVER writes to UserDefaults.standard.
+        store.languageMode = .en
+        XCTAssertTrue(L10n.isEnglish)
+        XCTAssertNil(UserDefaults.standard.object(forKey: "appLanguageMode"))
+        XCTAssertNil(UserDefaults.standard.persistentDomain(forName: bundleID)?["appLanguageMode"])
+        XCTAssertNil(UserDefaults.standard.persistentDomain(forName: bundleID)?["AppleLanguages"])
+        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: "AppleLanguages"), appleLanguagesBefore)
+        XCTAssertTrue(backend.map["local_preferences_v2"]?.starts(with: Data("EKM1".utf8)) == true)
+
+        let reloadedPrefs = VaultPreferencesStore.load(using: backend)
+        XCTAssertEqual(reloadedPrefs.languageModeRaw, "en")
+        XCTAssertTrue(reloadedPrefs.biometricsEnabled)
+        XCTAssertTrue(reloadedPrefs.wipeAfterFailedAttempts)
     }
 }
 

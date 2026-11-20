@@ -20,9 +20,14 @@ struct LockScreenView: View {
             .ignoresSafeArea()
 
             VStack(spacing: 24) {
+                HStack {
+                    Spacer()
+                    LanguageMenuButton(selection: $store.languageMode, isDarkSurface: true)
+                }
+                .padding(.top, 8)
+
                 if store.runtimeIntegrity.isCompromised {
                     RuntimeCompromiseBanner(text: store.runtimeIntegrity.summaryText)
-                        .padding(.top, 12)
                 }
 
                 Spacer()
@@ -47,13 +52,15 @@ struct LockScreenView: View {
                             )
                     }
 
-                    Text(store.isLockdownModeActive ? "Enkard 紧急锁定中" : "Enkard 已锁定")
+                    Text(store.isLockdownModeActive
+                        ? tr("Enkard 紧急锁定中", "Enkard Emergency Lockdown")
+                        : tr("Enkard 已锁定", "Enkard Locked"))
                         .font(.title2.bold())
                         .foregroundStyle(.white)
 
                     HStack(spacing: 6) {
                         Image(systemName: "cpu.fill")
-                        Text("断网零同步 · Secure Enclave 硬件保护中")
+                        Text(tr("断网零同步 · Secure Enclave 硬件保护中", "Zero Sync · Protected by Secure Enclave"))
                     }
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.58))
@@ -69,7 +76,7 @@ struct LockScreenView: View {
                         HStack(spacing: 10) {
                             Image(systemName: store.biometricKind.systemImage)
                                 .font(.system(size: 20, weight: .semibold))
-                            Text("使用\(store.biometricKind.displayName)解锁")
+                            Text(tr("使用\(store.biometricKind.displayName)解锁", "Unlock with \(store.biometricKind.displayName)"))
                                 .fontWeight(.semibold)
                         }
                         .foregroundStyle(.black)
@@ -91,7 +98,10 @@ struct LockScreenView: View {
                 } else if store.biometricsEnabled && store.isBiometricSuspendedBySecurityPolicy {
                     HStack(spacing: 6) {
                         Image(systemName: "hand.raised.slash.fill")
-                        Text("已暂停\(store.biometricKind.displayName)快捷解锁，必须验证主密码")
+                        Text(tr(
+                            "已暂停\(store.biometricKind.displayName)快捷解锁，必须验证主密码",
+                            "\(store.biometricKind.displayName) suspended; master password required"
+                        ))
                     }
                     .font(.caption)
                     .foregroundStyle(Color(red: 0.96, green: 0.80, blue: 0.45))
@@ -99,7 +109,7 @@ struct LockScreenView: View {
 
                 // Master Password Box (Always SecureField — never converted to plain TextField)
                 VStack(spacing: 12) {
-                    SecureField("输入主密码解锁", text: $password)
+                    SecureField(tr("输入主密码解锁", "Enter master password to unlock"), text: $password)
                         .lockdownTextInput()
                         .focused($passwordFocused)
                         .submitLabel(.go)
@@ -126,7 +136,9 @@ struct LockScreenView: View {
                             } else {
                                 Image(systemName: "key.fill")
                             }
-                            Text(store.isBusy ? "正在验证安全芯片与密钥..." : "主密码解锁")
+                            Text(store.isBusy
+                                ? tr("正在验证安全芯片与密钥...", "Verifying Secure Enclave & Key...")
+                                : tr("主密码解锁", "Unlock with Master Password"))
                                 .fontWeight(.semibold)
                         }
                         .foregroundStyle(.white)
@@ -152,7 +164,10 @@ struct LockScreenView: View {
                     Button {
                         store.enterEmergencyLockdown()
                     } label: {
-                        Label("紧急禁用\(store.biometricKind.displayName)（下次必须输主密码）", systemImage: "exclamationmark.lock.fill")
+                        Label(
+                            tr("紧急禁用\(store.biometricKind.displayName)（下次必须输主密码）", "Disable \(store.biometricKind.displayName) (Require Password Next Time)"),
+                            systemImage: "exclamationmark.lock.fill"
+                        )
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.white.opacity(0.65))
                             .padding(.vertical, 8)

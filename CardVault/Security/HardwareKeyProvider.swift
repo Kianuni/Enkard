@@ -12,11 +12,11 @@ enum HardwareProtectionTier: String, Codable, Equatable, Sendable {
     var displayTitle: String {
         switch self {
         case .secureEnclavePasscodeBound:
-            return "Secure Enclave 安全芯片（已绑定锁屏密码）"
+            return tr("Secure Enclave 安全芯片（已绑定锁屏密码）", "Secure Enclave (Passcode-Bound)")
         case .secureEnclaveUnlockedBound:
-            return "Secure Enclave 安全芯片（仅解锁态可用）"
+            return tr("Secure Enclave 安全芯片（仅解锁态可用）", "Secure Enclave (Unlocked Only)")
         case .keychainDeviceBoundFallback:
-            return "本机专属钥匙串密钥（当前环境无可用 SE）"
+            return tr("本机专属钥匙串密钥（当前环境无可用 SE）", "Device Keychain Key (No SE Available)")
         }
     }
 }
@@ -31,15 +31,30 @@ enum HardwareKeyError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .keyNotFound:
-            return "未找到本机安全芯片绑定密钥（该加密库可能来自其他设备，或本机密钥已被安全销毁；跨设备请使用加密备份恢复）"
+            return tr(
+                "未找到本机安全芯片绑定密钥（该加密库可能来自其他设备，或本机密钥已被安全销毁；跨设备请使用加密备份恢复）",
+                "Device Secure Enclave key not found (this vault may belong to another device, or its key was securely wiped; use an encrypted backup to restore across devices)."
+            )
         case .temporarilyUnavailable:
-            return "系统钥匙串或安全芯片当前暂不可访问，请先解锁手机屏幕后再试"
+            return tr(
+                "系统钥匙串或安全芯片当前暂不可访问，请先解锁手机屏幕后再试",
+                "Keychain or Secure Enclave is temporarily unavailable. Please unlock your iPhone and try again."
+            )
         case .keyCreationFailed:
-            return "创建本机安全芯片密钥失败，请确认设备已解锁并开启锁屏密码"
+            return tr(
+                "创建本机安全芯片密钥失败，请确认设备已解锁并开启锁屏密码",
+                "Failed to create Secure Enclave hardware key. Make sure your device is unlocked with a passcode set."
+            )
         case .keyAgreementFailed:
-            return "本机安全芯片密钥协商失败"
+            return tr(
+                "本机安全芯片密钥协商失败",
+                "Secure Enclave hardware key agreement failed."
+            )
         case .invalidEphemeralPublicKey:
-            return "加密信封中的硬件协商公钥无效或已损坏"
+            return tr(
+                "加密信封中的硬件协商公钥无效或已损坏",
+                "Invalid or corrupted hardware ephemeral public key in vault envelope."
+            )
         }
     }
 }

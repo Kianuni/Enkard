@@ -32,31 +32,68 @@ struct SecuritySettingsView: View {
 
                 // Security Architecture Status
                 Section {
-                    AuditRow(icon: "wifi.slash", label: "网络与同步", value: "进程断网拦截已激活 · 零云同步")
-                    AuditRow(icon: "cpu.fill", label: "硬件密钥绑定", value: store.hardwareProtectionDescription)
+                    AuditRow(
+                        icon: "wifi.slash",
+                        label: tr("网络与同步", "Network & Sync"),
+                        value: tr("进程断网拦截已激活 · 零云同步", "Kill-switch active · Zero cloud sync")
+                    )
+                    AuditRow(
+                        icon: "cpu.fill",
+                        label: tr("硬件密钥绑定", "Hardware Key"),
+                        value: store.hardwareProtectionDescription
+                    )
                     AuditRow(
                         icon: store.runtimeIntegrity.isCompromised ? "exclamationmark.triangle.fill" : "checkmark.shield.fill",
-                        label: "运行时完整性",
+                        label: tr("运行时完整性", "Runtime Integrity"),
                         value: store.runtimeIntegrity.summaryText,
                         isWarning: store.runtimeIntegrity.isCompromised
                     )
-                    AuditRow(icon: "keyboard", label: "扩展与 AI 输入", value: "封禁全部第三方扩展 · 禁写作工具")
-                    AuditRow(icon: "lock.doc.fill", label: "信封加密协议", value: "LOCAL_V2 · 4KB 填充防侧信道")
-                    AuditRow(icon: "speedometer", label: "PBKDF2 迭代", value: "\(store.kdfIterations.formatted()) 次")
+                    AuditRow(
+                        icon: "keyboard",
+                        label: tr("扩展与 AI 输入", "Extensions & AI"),
+                        value: tr("封禁全部第三方扩展 · 禁写作工具", "3rd-party extensions & Writing Tools blocked")
+                    )
+                    AuditRow(
+                        icon: "lock.doc.fill",
+                        label: tr("信封加密协议", "Vault Envelope"),
+                        value: tr("LOCAL_V2 · 4KB 填充防侧信道", "LOCAL_V2 · 4KB side-channel padding")
+                    )
+                    AuditRow(
+                        icon: "speedometer",
+                        label: tr("PBKDF2 迭代", "PBKDF2 Iterations"),
+                        value: tr("\(store.kdfIterations.formatted()) 次", "\(store.kdfIterations.formatted()) rounds")
+                    )
                     AuditRow(
                         icon: "camera.metering.none",
-                        label: "截图与录屏防护",
-                        value: SecureCanvasSupport.isAvailable ? "安全图层空白渲染 + 独立遮罩窗" : "录屏遮罩已开启（无截图图层）"
+                        label: tr("截图与录屏防护", "Screen Protection"),
+                        value: SecureCanvasSupport.isAvailable
+                            ? tr("安全图层空白渲染 + 独立遮罩窗", "Secure blank canvas + Shield window")
+                            : tr("录屏遮罩已开启（无截图图层）", "Capture shield active (No canvas layer)")
                     )
-                    AuditRow(icon: "internaldrive.fill", label: "本机存储保护", value: "锁屏销毁内存密钥 · 禁系统备份")
+                    AuditRow(
+                        icon: "internaldrive.fill",
+                        label: tr("本机存储保护", "Local Storage"),
+                        value: tr("锁屏销毁内存密钥 · 禁系统备份", "Wipes RAM on lock · Excluded from backups")
+                    )
                 } header: {
-                    Text("Enkard 最高安全状态")
+                    Text(tr("Enkard 最高安全状态", "Enkard Security Posture"))
                 } footer: {
-                    Text("双重物理断网建议：您还可以在 iPhone「设置 → App → Enkard → 无线数据」中选择「关闭」，由 iOS 系统内核再加一道零流量防火墙。")
+                    Text(tr(
+                        "双重物理断网建议：您还可以在 iPhone「设置 → App → Enkard → 无线数据」中选择「关闭」，由 iOS 系统内核再加一道零流量防火墙。",
+                        "Defense-in-Depth Tip: You can also set iOS \"Settings → Apps → Enkard → Wireless Data\" to \"Off\" for a kernel-level zero-traffic firewall."
+                    ))
                 }
 
                 // Biometric & Privacy Controls
                 Section {
+                    Picker(selection: $store.languageMode) {
+                        ForEach(AppLanguageMode.allCases) { mode in
+                            Text(mode.displayTitle).tag(mode)
+                        }
+                    } label: {
+                        Label(tr("界面语言", "App Language"), systemImage: "globe")
+                    }
+
                     if store.biometricKind != .none {
                         Toggle(
                             isOn: Binding(
@@ -66,24 +103,27 @@ struct SecuritySettingsView: View {
                                 }
                             )
                         ) {
-                            Label("\(store.biometricKind.displayName)快捷解锁", systemImage: store.biometricKind.systemImage)
+                            Label(
+                                tr("\(store.biometricKind.displayName)快捷解锁", "\(store.biometricKind.displayName) Unlock"),
+                                systemImage: store.biometricKind.systemImage
+                            )
                         }
                         .disabled(store.runtimeIntegrity.isCompromised)
                     }
 
-                    Picker("切后台自动锁定", selection: $store.autoLockTimeout) {
+                    Picker(tr("切后台自动锁定", "Auto-Lock in Background"), selection: $store.autoLockTimeout) {
                         ForEach(AutoLockTimeout.allCases) { option in
                             Text(option.title).tag(option)
                         }
                     }
 
-                    Picker("前台空闲自动锁定", selection: $store.idleLockTimeout) {
+                    Picker(tr("前台空闲自动锁定", "Idle Auto-Lock"), selection: $store.idleLockTimeout) {
                         ForEach(IdleLockTimeout.allCases) { option in
                             Text(option.title).tag(option)
                         }
                     }
 
-                    Picker("剪贴板自动销毁", selection: $store.clipboardClearDuration) {
+                    Picker(tr("剪贴板自动销毁", "Clipboard Auto-Clear"), selection: $store.clipboardClearDuration) {
                         ForEach(ClipboardClearDuration.allCases) { option in
                             Text(option.title).tag(option)
                         }
@@ -91,17 +131,26 @@ struct SecuritySettingsView: View {
 
                     Button {
                         if store.clipboard.clearIfOwned() {
-                            statusBannerMessage = "已立即清空 Enkard 写入剪贴板的内容"
+                            statusBannerMessage = tr(
+                                "已立即清空 Enkard 写入剪贴板的内容",
+                                "Cleared Enkard clipboard contents immediately"
+                            )
                         } else {
-                            statusBannerMessage = "剪贴板中当前没有 Enkard 写入的内容"
+                            statusBannerMessage = tr(
+                                "剪贴板中当前没有 Enkard 写入的内容",
+                                "No Enkard-owned data currently on clipboard"
+                            )
                         }
                     } label: {
-                        Label("立即清空本机剪贴板", systemImage: "scissors")
+                        Label(tr("立即清空本机剪贴板", "Clear Local Clipboard Now"), systemImage: "scissors")
                     }
                 } header: {
-                    Text("解锁、遮罩与剪贴板策略")
+                    Text(tr("语言、解锁与剪贴板策略", "Language, Unlock & Clipboard"))
                 } footer: {
-                    Text("切后台瞬间由顶层独立 UIKit 窗口盖住画面；按电源键锁屏、手动锁定、空闲锁定或倒计时结束时，剪贴板中的卡号/CVV 均会被立即销毁，且绝不通过通用剪贴板同步到其他 Apple 设备。")
+                    Text(tr(
+                        "语言偏好加密保存于本机专属钥匙串（禁系统备份）。切后台瞬间由顶层独立 UIKit 窗口盖住画面；按电源键锁屏、手动锁定、空闲锁定或倒计时结束时，剪贴板中的卡号/CVV 均会被立即销毁，且绝不通过通用剪贴板同步到其他 Apple 设备。",
+                        "Language preference is stored locally in device-only Keychain (never backed up). Switching apps immediately raises an opaque top-level UIKit shield; locking the phone, manual/idle lock, or timer expiry clears copied data and never syncs via Universal Clipboard."
+                    ))
                 }
 
                 // Brute-force & Coercion Protection
@@ -118,7 +167,13 @@ struct SecuritySettingsView: View {
                             }
                         )
                     ) {
-                        Label("连续输错 \(LockoutPolicy.wipeThreshold) 次主密码后销毁硬件密钥与数据", systemImage: "flame.fill")
+                        Label(
+                            tr(
+                                "连续输错 \(LockoutPolicy.wipeThreshold) 次主密码后销毁硬件密钥与数据",
+                                "Erase Vault After \(LockoutPolicy.wipeThreshold) Failed Attempts"
+                            ),
+                            systemImage: "flame.fill"
+                        )
                     }
 
                     if store.biometricsEnabled && store.biometricKind != .none {
@@ -126,53 +181,71 @@ struct SecuritySettingsView: View {
                             store.enterEmergencyLockdown()
                             dismiss()
                         } label: {
-                            Label("立即进入紧急锁定（临时禁用\(store.biometricKind.displayName)）", systemImage: "exclamationmark.lock.fill")
+                            Label(
+                                tr(
+                                    "立即进入紧急锁定（临时禁用\(store.biometricKind.displayName)）",
+                                    "Enter Emergency Lockdown (Disable \(store.biometricKind.displayName))"
+                                ),
+                                systemImage: "exclamationmark.lock.fill"
+                            )
                                 .foregroundStyle(.orange)
                         }
                     }
                 } header: {
-                    Text("防暴力破解与防熟睡/胁迫保护")
+                    Text(tr("防暴力破解与防熟睡/胁迫保护", "Brute-Force & Coercion Protection"))
                 } footer: {
-                    Text("错误计数采用 Fail-Closed 机制写入本机专属钥匙串（不同步 iCloud），第 5 次错误起自动挂起生物识别并递增冷却至 1 小时。开启 15 次销毁后，触发时会直接销毁 Secure Enclave 芯片绑定私钥，实现硬件级密码学擦除。")
+                    Text(tr(
+                        "错误计数采用 Fail-Closed 机制写入本机专属钥匙串（不同步 iCloud），第 5 次错误起自动挂起生物识别并递增冷却至 1 小时。开启 15 次销毁后，触发时会直接销毁 Secure Enclave 芯片绑定私钥，实现硬件级密码学擦除。",
+                        "Failed attempts are stored fail-closed in device-only Keychain (never synced). From attempt 5 onward, biometrics suspend and monotonic cooldown scales up to 1 hour. When 15-attempt wipe is enabled, hitting the limit crypto-shreds the Secure Enclave key."
+                    ))
                 }
 
                 // Encrypted Offline Backup Section
                 Section {
                     Button {
                         guard !store.isScreenCaptured else {
-                            store.securityNotice = "录屏或投屏期间禁止导出加密备份。"
+                            store.securityNotice = tr(
+                                "录屏或投屏期间禁止导出加密备份。",
+                                "Exporting encrypted backups is blocked during screen recording or mirroring."
+                            )
                             return
                         }
                         showingExportPasswordPrompt = true
                     } label: {
-                        Label("导出离线加密备份 (.enkard)", systemImage: "square.and.arrow.up.fill")
+                        Label(tr("导出离线加密备份 (.enkard)", "Export Offline Backup (.enkard)"), systemImage: "square.and.arrow.up.fill")
                     }
                     .disabled(store.isScreenCaptured)
 
                     Button {
                         showingFileImporter = true
                     } label: {
-                        Label("导入离线加密备份 (.enkard / .cardse / .cardvault)", systemImage: "square.and.arrow.down.fill")
+                        Label(
+                            tr("导入离线加密备份 (.enkard / .cardse / .cardvault)", "Import Offline Backup (.enkard / .cardse / .cardvault)"),
+                            systemImage: "square.and.arrow.down.fill"
+                        )
                     }
                 } header: {
-                    Text("纯离线迁移备份（仅换机或重签前使用）")
+                    Text(tr("纯离线迁移备份（仅换机或重签前使用）", "Offline Migration Backup (Device Switch / Re-signing)"))
                 } footer: {
-                    Text("Enkard 严禁任何自动云同步。由于本地加密库绑定了当前手机的安全芯片，换新机前请手动导出备份并保存在「我的 iPhone」本地目录或离线 U 盘中，切勿保存到 iCloud Drive 或网盘。")
+                    Text(tr(
+                        "Enkard 严禁任何自动云同步。由于本地加密库绑定了当前手机的安全芯片，换新机前请手动导出备份并保存在「我的 iPhone」本地目录或离线 U 盘中，切勿保存到 iCloud Drive 或网盘。",
+                        "Enkard strictly prohibits automatic cloud sync. Because your local vault is bound to this iPhone's Secure Enclave, export an offline backup to \"On My iPhone\" or a physical USB drive before switching devices—never save to iCloud Drive."
+                    ))
                 }
 
                 // Master Password Rotation
-                Section("密钥轮换与锁定") {
+                Section(tr("密钥轮换与锁定", "Key Rotation & Locking")) {
                     Button {
                         showingChangePassword = true
                     } label: {
-                        Label("轮换主密码与安全芯片密钥", systemImage: "key.horizontal.fill")
+                        Label(tr("轮换主密码与安全芯片密钥", "Rotate Master Password & Chip Key"), systemImage: "key.horizontal.fill")
                     }
 
                     Button {
                         store.lock(reason: .manual)
                         dismiss()
                     } label: {
-                        Label("立即锁定 Enkard", systemImage: "lock.fill")
+                        Label(tr("立即锁定 Enkard", "Lock Enkard Now"), systemImage: "lock.fill")
                     }
                 }
 
@@ -181,28 +254,34 @@ struct SecuritySettingsView: View {
                     Button(role: .destructive) {
                         showingDestroySheet = true
                     } label: {
-                        Label("销毁安全芯片密钥并彻底擦除卡包", systemImage: "trash.slash.fill")
+                        Label(tr("销毁安全芯片密钥并彻底擦除卡包", "Destroy Chip Key & Erase Vault"), systemImage: "trash.slash.fill")
                     }
                 } footer: {
-                    Text("不可逆操作：将销毁 Secure Enclave 硬件私钥、生物识别密钥与本地密文文件。")
+                    Text(tr(
+                        "不可逆操作：将销毁 Secure Enclave 硬件私钥、生物识别密钥与本地密文文件。",
+                        "Irreversible: cryptographically shreds the Secure Enclave private key, biometric key, and local ciphertext."
+                    ))
                 }
             }
-            .navigationTitle("安全与离线备份")
+            .navigationTitle(tr("安全与离线备份", "Security & Offline Backup"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                    Button(tr("完成", "Done")) { dismiss() }
                 }
             }
             .confirmationDialog(
-                "开启后，连续输错 \(LockoutPolicy.wipeThreshold) 次主密码将直接销毁 Secure Enclave 硬件私钥并擦除所有卡片，无法恢复。请确认您已妥善保存离线备份。",
+                tr(
+                    "开启后，连续输错 \(LockoutPolicy.wipeThreshold) 次主密码将直接销毁 Secure Enclave 硬件私钥并擦除所有卡片，无法恢复。请确认您已妥善保存离线备份。",
+                    "Once enabled, \(LockoutPolicy.wipeThreshold) consecutive failed master password attempts will destroy the Secure Enclave key and erase all cards permanently. Ensure you keep an offline backup."
+                ),
                 isPresented: $showingWipeConfirm,
                 titleVisibility: .visible
             ) {
-                Button("确认开启自动销毁", role: .destructive) {
+                Button(tr("确认开启自动销毁", "Enable Auto-Erase"), role: .destructive) {
                     store.wipeAfterFailedAttempts = true
                 }
-                Button("取消", role: .cancel) {}
+                Button(tr("取消", "Cancel"), role: .cancel) {}
             }
             .sheet(isPresented: $showingExportPasswordPrompt) {
                 ExportBackupPasswordSheet(store: store) { generatedData in
@@ -218,7 +297,7 @@ struct SecuritySettingsView: View {
             ) { result in
                 if case .success(let exportedURL) = result {
                     store.warnIfCloudSyncedURL(exportedURL)
-                    statusBannerMessage = "离线加密备份导出完成"
+                    statusBannerMessage = tr("离线加密备份导出完成", "Offline encrypted backup exported")
                 }
                 exportDocument = nil
             }
@@ -237,7 +316,10 @@ struct SecuritySettingsView: View {
                         pendingImportData = try VaultCrypto.readBackupFileBounded(at: url)
                         showingImportSheet = true
                     } catch {
-                        store.errorMessage = "备份文件无效、包含异常软链接或超过 \(VaultCrypto.maximumBackupFileByteCount / 1024 / 1024) MB 安全上限"
+                        store.errorMessage = tr(
+                            "备份文件无效、包含异常软链接或超过 \(VaultCrypto.maximumBackupFileByteCount / 1024 / 1024) MB 安全上限",
+                            "Backup file is invalid, contains a symlink, or exceeds the \(VaultCrypto.maximumBackupFileByteCount / 1024 / 1024) MB safety limit"
+                        )
                     }
                 case .failure(let error):
                     store.errorMessage = error.localizedDescription
@@ -247,12 +329,15 @@ struct SecuritySettingsView: View {
                 pendingImportData = nil
             }) {
                 ImportBackupSheet(store: store, data: pendingImportData ?? Data()) { count in
-                    statusBannerMessage = "成功导入 \(count) 张银行卡"
+                    statusBannerMessage = tr("成功导入 \(count) 张银行卡", "Successfully imported \(count) card(s)")
                 }
             }
             .sheet(isPresented: $showingChangePassword) {
                 ChangeMasterPasswordSheet(store: store) {
-                    statusBannerMessage = "主密码、DEK 与安全芯片绑定密钥已全部轮换"
+                    statusBannerMessage = tr(
+                        "主密码、DEK 与安全芯片绑定密钥已全部轮换",
+                        "Master password, DEK, and hardware key rotated"
+                    )
                 }
             }
             .sheet(isPresented: $showingDestroySheet) {
@@ -321,9 +406,16 @@ private struct ExportBackupPasswordSheet: View {
     let onExportReady: (Data) -> Void
 
     enum Mode: String, CaseIterable, Identifiable {
-        case generated = "随机恢复口令（推荐）"
-        case custom = "自定义强密码"
+        case generated
+        case custom
         var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .generated: return tr("随机恢复口令（推荐）", "Random Passphrase (Recommended)")
+            case .custom: return tr("自定义强密码", "Custom Strong Password")
+            }
+        }
     }
 
     @Environment(\.dismiss) private var dismiss
@@ -355,18 +447,24 @@ private struct ExportBackupPasswordSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    SecureField("输入当前本机主密码以授权导出", text: $currentMasterPassword)
+                    SecureField(
+                        tr("输入当前本机主密码以授权导出", "Enter current master password to authorize"),
+                        text: $currentMasterPassword
+                    )
                         .lockdownTextInput()
                 } header: {
-                    Text("验证当前本机主密码")
+                    Text(tr("验证当前本机主密码", "Verify Current Master Password"))
                 } footer: {
-                    Text("导出离线备份会剥离本机安全芯片绑定，因此必须验证主密码（仅凭面容/触控 ID 解锁的会话无法直接导出）。")
+                    Text(tr(
+                        "导出离线备份会剥离本机安全芯片绑定，因此必须验证主密码（仅凭面容/触控 ID 解锁的会话无法直接导出）。",
+                        "Exporting an offline backup strips device hardware binding, so master password verification is required (biometric-only sessions cannot export)."
+                    ))
                 }
 
                 Section {
-                    Picker("保护方式", selection: $mode) {
+                    Picker(tr("保护方式", "Protection Method"), selection: $mode) {
                         ForEach(Mode.allCases) { item in
-                            Text(item.rawValue).tag(item)
+                            Text(item.title).tag(item)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -386,20 +484,23 @@ private struct ExportBackupPasswordSheet: View {
                             generatedPassphrase = PasswordPolicy.generateRecoveryPassphrase()
                             hasRecordedPassphrase = false
                         } label: {
-                            Label("重新生成随机口令", systemImage: "arrow.triangle.2.circlepath")
+                            Label(tr("重新生成随机口令", "Regenerate Random Passphrase"), systemImage: "arrow.triangle.2.circlepath")
                         }
 
-                        Toggle("我已离线手写抄录并核对无误", isOn: $hasRecordedPassphrase)
+                        Toggle(tr("我已离线手写抄录并核对无误", "I have written down and verified this passphrase offline"), isOn: $hasRecordedPassphrase)
                     } header: {
-                        Text("一次性 125-bit 恢复口令")
+                        Text(tr("一次性 125-bit 恢复口令", "One-Time 125-bit Recovery Passphrase"))
                     } footer: {
-                        Text("共 125 bit 密码学真随机强度，算力穷举在物理上不可行。请手写在纸上离线保管（截图此区域为空白）。口令遗失后任何人都无法解开该备份。")
+                        Text(tr(
+                            "共 125 bit 密码学真随机强度，算力穷举在物理上不可行。请手写在纸上离线保管（截图此区域为空白）。口令遗失后任何人都无法解开该备份。",
+                            "True 125-bit cryptographic entropy—brute-force is physically infeasible. Write it down on paper offline (screenshots of this area appear blank). Lost passphrases cannot be recovered."
+                        ))
                     }
                 case .custom:
                     Section {
-                        SecureField("备份密码（至少 12 位，≥65 bit）", text: $password)
+                        SecureField(tr("备份密码（至少 12 位，≥65 bit）", "Backup password (min 12 chars, ≥65 bits)"), text: $password)
                             .lockdownTextInput()
-                        SecureField("再次确认备份密码", text: $confirmPassword)
+                        SecureField(tr("再次确认备份密码", "Confirm backup password"), text: $confirmPassword)
                             .lockdownTextInput()
                         if !password.isEmpty {
                             PasswordStrengthIndicator(password: password)
@@ -408,18 +509,33 @@ private struct ExportBackupPasswordSheet: View {
                             }
                         }
                         if !confirmPassword.isEmpty && password != confirmPassword {
-                            Text("两次输入不一致").font(.caption).foregroundStyle(.red)
+                            Text(tr("两次输入不一致", "Passwords do not match")).font(.caption).foregroundStyle(.red)
                         }
                     } header: {
-                        Text("自定义备份强口令")
+                        Text(tr("自定义备份强口令", "Custom Strong Backup Passphrase"))
                     } footer: {
-                        Text("至少 12 位、强度 ≥65 bit，且禁止与本机主密码相同。")
+                        Text(tr(
+                            "至少 12 位、强度 ≥65 bit，且禁止与本机主密码相同。",
+                            "Minimum 12 characters, ≥65 bits entropy, and must differ from your master password."
+                        ))
                     }
                 }
 
                 Section {
-                    Label("导出选择保存位置时，请务必选择「我的 iPhone（On My iPhone）」或外接离线 U 盘，请勿选「iCloud 云盘」，确保零云端同步。", systemImage: "externaldrive.badge.xmark")
-                    Label("备份体积已统一按 4KB 块填充对齐，外界无法从文件大小推断卡片数量。", systemImage: "shield.lefthalf.filled")
+                    Label(
+                        tr(
+                            "导出选择保存位置时，请务必选择「我的 iPhone（On My iPhone）」或外接离线 U 盘，请勿选「iCloud 云盘」，确保零云端同步。",
+                            "When saving, choose \"On My iPhone\" or an offline USB drive—never \"iCloud Drive\"—to ensure zero cloud sync."
+                        ),
+                        systemImage: "externaldrive.badge.xmark"
+                    )
+                    Label(
+                        tr(
+                            "备份体积已统一按 4KB 块填充对齐，外界无法从文件大小推断卡片数量。",
+                            "Backup sizes are padded to 4KB blocks so file size reveals nothing about card count."
+                        ),
+                        systemImage: "shield.lefthalf.filled"
+                    )
                 }
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -432,17 +548,17 @@ private struct ExportBackupPasswordSheet: View {
                     }
                 }
             }
-            .navigationTitle("导出离线加密备份")
+            .navigationTitle(tr("导出离线加密备份", "Export Offline Backup"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+                    Button(tr("取消", "Cancel")) {
                         scrubSecrets()
                         dismiss()
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(store.isBusy ? "加密封装中..." : "下一步") {
+                    Button(store.isBusy ? tr("加密封装中...", "Encrypting...") : tr("下一步", "Next")) {
                         let curMaster = currentMasterPassword
                         let secret = effectivePassword
                         Task {
@@ -466,7 +582,10 @@ private struct ExportBackupPasswordSheet: View {
                 if mode == .generated && !SecureCanvasSupport.isAvailable {
                     generatedPassphrase = PasswordPolicy.generateRecoveryPassphrase()
                     hasRecordedPassphrase = false
-                    errorText = "检测到截屏，已自动作废旧恢复口令并生成新口令。"
+                    errorText = tr(
+                        "检测到截屏，已自动作废旧恢复口令并生成新口令。",
+                        "Screenshot detected. Previous passphrase invalidated and replaced with a new one."
+                    )
                 }
             }
             .onValueChange(of: store.phase) { newPhase in
@@ -508,13 +627,13 @@ private struct ImportBackupSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("输入离线备份密码或恢复口令") {
-                    SecureField("备份文件的口令", text: $backupPassword)
+                Section(tr("输入离线备份密码或恢复口令", "Enter Offline Backup Passphrase")) {
+                    SecureField(tr("备份文件的口令", "Backup passphrase"), text: $backupPassword)
                         .lockdownTextInput()
                 }
 
-                Section("导入方式") {
-                    Picker("模式", selection: $mode) {
+                Section(tr("导入方式", "Import Mode")) {
+                    Picker(tr("模式", "Mode"), selection: $mode) {
                         ForEach(BackupImportMode.allCases) { item in
                             Text(item.title).tag(item)
                         }
@@ -530,17 +649,17 @@ private struct ImportBackupSheet: View {
                     }
                 }
             }
-            .navigationTitle("导入离线加密备份")
+            .navigationTitle(tr("导入离线加密备份", "Import Offline Backup"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+                    Button(tr("取消", "Cancel")) {
                         backupPassword = ""
                         dismiss()
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(store.isBusy ? "解密中..." : "解密导入") {
+                    Button(store.isBusy ? tr("解密中...", "Decrypting...") : tr("解密导入", "Decrypt & Import")) {
                         let pass = backupPassword
                         Task {
                             do {
@@ -585,15 +704,15 @@ private struct ChangeMasterPasswordSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("验证当前主密码") {
-                    SecureField("输入当前主密码", text: $currentPassword)
+                Section(tr("验证当前主密码", "Verify Current Master Password")) {
+                    SecureField(tr("输入当前主密码", "Current master password"), text: $currentPassword)
                         .lockdownTextInput()
                 }
 
                 Section {
-                    SecureField("新主密码（至少 8 位，≥40 bit）", text: $newPassword)
+                    SecureField(tr("新主密码（至少 8 位，≥40 bit）", "New master password (min 8 chars, ≥40 bits)"), text: $newPassword)
                         .lockdownTextInput()
-                    SecureField("确认新主密码", text: $confirmPassword)
+                    SecureField(tr("确认新主密码", "Confirm new master password"), text: $confirmPassword)
                         .lockdownTextInput()
                     if !newPassword.isEmpty {
                         PasswordStrengthIndicator(password: newPassword)
@@ -602,9 +721,12 @@ private struct ChangeMasterPasswordSheet: View {
                         }
                     }
                 } header: {
-                    Text("设置新主密码")
+                    Text(tr("设置新主密码", "Set New Master Password"))
                 } footer: {
-                    Text("将同步轮换随机盐、数据密钥（DEK）与 Secure Enclave 安全芯片私钥。此前已导出的离线备份仍须用导出时的备份口令解开。")
+                    Text(tr(
+                        "将同步轮换随机盐、数据密钥（DEK）与 Secure Enclave 安全芯片私钥。此前已导出的离线备份仍须用导出时的备份口令解开。",
+                        "Rotates salt, DEK, and Secure Enclave hardware key simultaneously. Previously exported backups still use their original export passphrase."
+                    ))
                 }
 
                 if let error = store.errorMessage {
@@ -615,17 +737,17 @@ private struct ChangeMasterPasswordSheet: View {
                     }
                 }
             }
-            .navigationTitle("轮换主密码与芯片密钥")
+            .navigationTitle(tr("轮换主密码与芯片密钥", "Rotate Master Password & Key"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+                    Button(tr("取消", "Cancel")) {
                         scrubState()
                         dismiss()
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(store.isBusy ? "硬件重加密中..." : "确认轮换") {
+                    Button(store.isBusy ? tr("硬件重加密中...", "Re-encrypting...") : tr("确认轮换", "Rotate Keys")) {
                         let cur = currentPassword
                         let next = newPassword
                         Task {
@@ -675,18 +797,26 @@ private struct DestroyVaultConfirmSheet: View {
     @State private var confirmText = ""
     @State private var masterPassword = ""
 
+    private var isConfirmed: Bool {
+        confirmText == "销毁"
+            || confirmText.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "DESTROY"
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Text("此操作将销毁本机 Secure Enclave 硬件绑定私钥、生物识别密钥及本地加密数据。若无离线 .enkard 备份，卡片信息将永久无法恢复。")
+                    Text(tr(
+                        "此操作将销毁本机 Secure Enclave 硬件绑定私钥、生物识别密钥及本地加密数据。若无离线 .enkard 备份，卡片信息将永久无法恢复。",
+                        "This permanently shreds the Secure Enclave hardware key, biometric key, and local encrypted vault. Without an offline .enkard backup, your cards cannot be recovered."
+                    ))
                         .font(.subheadline)
                         .foregroundStyle(.red)
 
-                    TextField("请输入「销毁」两个字确认", text: $confirmText)
+                    TextField(tr("请输入「销毁」两个字确认", "Type \"DESTROY\" to confirm"), text: $confirmText)
                         .lockdownTextInput()
 
-                    SecureField("输入当前主密码授权销毁", text: $masterPassword)
+                    SecureField(tr("输入当前主密码授权销毁", "Enter current master password"), text: $masterPassword)
                         .lockdownTextInput()
                 }
 
@@ -698,18 +828,18 @@ private struct DestroyVaultConfirmSheet: View {
                     }
                 }
             }
-            .navigationTitle("销毁本机卡包")
+            .navigationTitle(tr("销毁本机卡包", "Erase Local Vault"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+                    Button(tr("取消", "Cancel")) {
                         confirmText = ""
                         masterPassword = ""
                         dismiss()
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(store.isBusy ? "验证中..." : "永久销毁", role: .destructive) {
+                    Button(store.isBusy ? tr("验证中...", "Verifying...") : tr("永久销毁", "Erase Forever"), role: .destructive) {
                         let entered = masterPassword
                         masterPassword = ""
                         Task {
@@ -720,7 +850,7 @@ private struct DestroyVaultConfirmSheet: View {
                             }
                         }
                     }
-                    .disabled(confirmText != "销毁" || masterPassword.isEmpty || store.isBusy)
+                    .disabled(!isConfirmed || masterPassword.isEmpty || store.isBusy)
                 }
             }
             .onValueChange(of: store.phase) { newPhase in

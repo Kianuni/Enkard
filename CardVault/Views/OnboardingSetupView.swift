@@ -55,7 +55,10 @@ struct OnboardingSetupView: View {
                         Text("Enkard")
                             .font(.title.bold())
 
-                        Text("零网络 · 零云同步 · Secure Enclave 硬件绑定")
+                        Text(tr(
+                            "零网络 · 零云同步 · Secure Enclave 硬件绑定",
+                            "Zero Network · Zero Cloud Sync · Secure Enclave Hardware Bound"
+                        ))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -64,23 +67,35 @@ struct OnboardingSetupView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         SecurityPillarRow(
                             icon: "wifi.exclamationmark",
-                            title: "彻底断网与零同步",
-                            subtitle: "内置进程级网络阻断器，禁用 iCloud、钥匙串同步、接力、系统备份与输入法词库学习"
+                            title: tr("彻底断网与零同步", "Completely Offline & Zero Sync"),
+                            subtitle: tr(
+                                "内置进程级网络阻断器，禁用 iCloud、钥匙串同步、接力、系统备份与输入法词库学习",
+                                "Process-level network kill-switch disables iCloud, Keychain sync, Handoff, backups & keyboard learning"
+                            )
                         )
                         SecurityPillarRow(
                             icon: "cpu.fill",
-                            title: "Secure Enclave 双因子硬件加密",
-                            subtitle: "主密码 PBKDF2 与本机安全芯片不可导出私钥联合保护，拷走文件也无法离线破解"
+                            title: tr("Secure Enclave 双因子硬件加密", "Secure Enclave Dual-Factor Crypto"),
+                            subtitle: tr(
+                                "主密码 PBKDF2 与本机安全芯片不可导出私钥联合保护，拷走文件也无法离线破解",
+                                "Master password PBKDF2 combined with non-exportable chip key — useless even if files are copied off-device"
+                            )
                         )
                         SecurityPillarRow(
                             icon: "keyboard.badge.ellipsis",
-                            title: "封禁全部第三方扩展与 AI 写作工具",
-                            subtitle: "仅限系统原生安全键盘，禁止第三方输入法、自动填充与写作工具读取输入"
+                            title: tr("封禁全部第三方扩展与 AI 写作工具", "Blocks 3rd-Party Keyboards & AI Tools"),
+                            subtitle: tr(
+                                "仅限系统原生安全键盘，禁止第三方输入法、自动填充与写作工具读取输入",
+                                "Restricts input to Apple's native keyboard and disables 3rd-party extensions, AutoFill & Writing Tools"
+                            )
                         )
                         SecurityPillarRow(
                             icon: "eye.slash.circle.fill",
-                            title: "防截屏安全层与限时剪贴板",
-                            subtitle: "敏感区域在截屏/录屏中自动空白，锁屏或到期立即销毁本机剪贴板"
+                            title: tr("防截屏安全层与限时剪贴板", "Screenshot Redaction & Expiring Clipboard"),
+                            subtitle: tr(
+                                "敏感区域在截屏/录屏中自动空白，锁屏或到期立即销毁本机剪贴板",
+                                "Sensitive fields render blank in screenshots/recordings; local clipboard auto-clears on lock or timeout"
+                            )
                         )
                     }
                     .padding(16)
@@ -88,10 +103,13 @@ struct OnboardingSetupView: View {
 
                     // Password Setup Card
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("设置 Enkard 主密码")
+                        Text(tr("设置 Enkard 主密码", "Set Enkard Master Password"))
                             .font(.headline)
 
-                        SecureField("至少 8 位，混合字母、数字与符号（≥40 bit）", text: $masterPassword)
+                        SecureField(
+                            tr("至少 8 位，混合字母、数字与符号（≥40 bit）", "Min 8 chars: mix letters, digits & symbols (≥40 bits)"),
+                            text: $masterPassword
+                        )
                             .lockdownTextInput()
                             .onValueChange(of: masterPassword) { val in
                                 if val.count > VaultCrypto.maximumPasswordLength {
@@ -101,7 +119,10 @@ struct OnboardingSetupView: View {
                             .padding(12)
                             .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                        SecureField("再次输入主密码确认", text: $confirmPassword)
+                        SecureField(
+                            tr("再次输入主密码确认", "Confirm master password"),
+                            text: $confirmPassword
+                        )
                             .lockdownTextInput()
                             .onValueChange(of: confirmPassword) { val in
                                 if val.count > VaultCrypto.maximumPasswordLength {
@@ -121,7 +142,10 @@ struct OnboardingSetupView: View {
                         }
 
                         if !confirmPassword.isEmpty && masterPassword != confirmPassword {
-                            Label("两次输入的主密码不一致", systemImage: "exclamationmark.circle.fill")
+                            Label(
+                                tr("两次输入的主密码不一致", "Master passwords do not match"),
+                                systemImage: "exclamationmark.circle.fill"
+                            )
                                 .font(.caption)
                                 .foregroundStyle(.red)
                         }
@@ -129,12 +153,18 @@ struct OnboardingSetupView: View {
                         if store.biometricKind != .none && !store.runtimeIntegrity.isCompromised {
                             Divider().padding(.vertical, 2)
                             Toggle(isOn: $enableBiometrics) {
-                                Label("启用\(store.biometricKind.displayName)快捷解锁", systemImage: store.biometricKind.systemImage)
+                                Label(
+                                    tr("启用\(store.biometricKind.displayName)快捷解锁", "Enable \(store.biometricKind.displayName) Quick Unlock"),
+                                    systemImage: store.biometricKind.systemImage
+                                )
                                     .font(.subheadline.weight(.medium))
                             }
                         }
 
-                        Text("注意：Enkard 完全离线且不参与任何云端同步，忘记主密码且无离线备份将永远无法恢复。")
+                        Text(tr(
+                            "注意：Enkard 完全离线且不参与任何云端同步，忘记主密码且无离线备份将永远无法恢复。",
+                            "Note: Enkard is strictly offline with zero cloud sync. If you forget your master password without a backup, your data cannot be recovered."
+                        ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -168,7 +198,9 @@ struct OnboardingSetupView: View {
                                 } else {
                                     Image(systemName: "lock.doc.fill")
                                 }
-                                Text(store.isBusy ? "正在绑定硬件安全芯片..." : "创建硬件加密卡包")
+                                Text(store.isBusy
+                                    ? tr("正在绑定硬件安全芯片...", "Binding to Secure Enclave...")
+                                    : tr("创建硬件加密卡包", "Create Hardware-Encrypted Vault"))
                                     .fontWeight(.semibold)
                             }
                             .frame(maxWidth: .infinity)
@@ -180,7 +212,10 @@ struct OnboardingSetupView: View {
                         Button {
                             isImportingBackup = true
                         } label: {
-                            Label("从离线加密备份 (.enkard / .cardse / .cardvault) 恢复", systemImage: "arrow.down.doc.fill")
+                            Label(
+                                tr("从离线加密备份 (.enkard / .cardse / .cardvault) 恢复", "Restore from Offline Backup (.enkard / .cardse / .cardvault)"),
+                                systemImage: "arrow.down.doc.fill"
+                            )
                                 .font(.subheadline.weight(.medium))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 10)
@@ -193,6 +228,11 @@ struct OnboardingSetupView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cardSeTrailing) {
+                    LanguageMenuButton(selection: $store.languageMode)
+                }
+            }
             .fileImporter(
                 isPresented: $isImportingBackup,
                 allowedContentTypes: [.data, .json],
@@ -238,10 +278,16 @@ struct OnboardingSetupView: View {
                 pendingBackupData = try VaultCrypto.readBackupFileBounded(at: url)
                 showRestoreSheet = true
             } catch {
-                store.errorMessage = "读取备份文件失败：\(error.localizedDescription)"
+                store.errorMessage = tr(
+                    "读取备份文件失败：\(error.localizedDescription)",
+                    "Failed to read backup file: \(error.localizedDescription)"
+                )
             }
         case .failure(let error):
-            store.errorMessage = "选择文件失败：\(error.localizedDescription)"
+            store.errorMessage = tr(
+                "选择文件失败：\(error.localizedDescription)",
+                "Failed to select file: \(error.localizedDescription)"
+            )
         }
     }
 }
@@ -255,7 +301,7 @@ struct RuntimeCompromiseBanner: View {
                 .font(.title3)
                 .foregroundStyle(.white)
             VStack(alignment: .leading, spacing: 3) {
-                Text("检测到高风险运行环境")
+                Text(tr("检测到高风险运行环境", "High-Risk Runtime Environment Detected"))
                     .font(.subheadline.bold())
                     .foregroundStyle(.white)
                 Text(text)
@@ -320,7 +366,10 @@ struct PasswordStrengthIndicator: View {
                         .frame(height: 4)
                 }
             }
-            Text("密码强度：\(result.label)（估算约 \(Int(result.estimatedBits)) bit）")
+            Text(tr(
+                "密码强度：\(result.label)（估算约 \(Int(result.estimatedBits)) bit）",
+                "Strength: \(result.label) (~\(Int(result.estimatedBits)) bits)"
+            ))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -342,18 +391,27 @@ private struct RestoreFromBackupSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    SecureField("备份密码或 25 位恢复口令", text: $backupPassword)
+                    SecureField(
+                        tr("备份密码或 25 位恢复口令", "Backup password or 25-char recovery passphrase"),
+                        text: $backupPassword
+                    )
                         .lockdownTextInput()
                 } header: {
-                    Text("第一步：输入离线备份口令")
+                    Text(tr("第一步：输入离线备份口令", "Step 1: Enter Offline Backup Passphrase"))
                 } footer: {
-                    Text("随机恢复口令须逐字输入，包括大写字母、数字和连字符。")
+                    Text(tr(
+                        "随机恢复口令须逐字输入，包括大写字母、数字和连字符。",
+                        "Enter random recovery passphrases exactly, including uppercase letters, digits, and hyphens."
+                    ))
                 }
 
                 Section {
-                    SecureField("设置本机新主密码（至少 8 位，≥40 bit）", text: $newMasterPassword)
+                    SecureField(
+                        tr("设置本机新主密码（至少 8 位，≥40 bit）", "New master password (min 8 chars, ≥40 bits)"),
+                        text: $newMasterPassword
+                    )
                         .lockdownTextInput()
-                    SecureField("确认本机新主密码", text: $confirmNewMaster)
+                    SecureField(tr("确认本机新主密码", "Confirm new master password"), text: $confirmNewMaster)
                         .lockdownTextInput()
                     if !newMasterPassword.isEmpty {
                         PasswordStrengthIndicator(password: newMasterPassword)
@@ -364,16 +422,24 @@ private struct RestoreFromBackupSheet: View {
                     if !backupPassword.isEmpty
                         && !newMasterPassword.isEmpty
                         && VaultCrypto.normalizePassword(backupPassword) == VaultCrypto.normalizePassword(newMasterPassword) {
-                        Text("本机主密码禁止与备份口令相同").font(.caption).foregroundStyle(.red)
+                        Text(tr("本机主密码禁止与备份口令相同", "Master password cannot match backup passphrase"))
+                            .font(.caption)
+                            .foregroundStyle(.red)
                     }
 
                     if store.biometricKind != .none && !store.runtimeIntegrity.isCompromised {
-                        Toggle("启用\(store.biometricKind.displayName)解锁", isOn: $enableBiometrics)
+                        Toggle(
+                            tr("启用\(store.biometricKind.displayName)解锁", "Enable \(store.biometricKind.displayName) Unlock"),
+                            isOn: $enableBiometrics
+                        )
                     }
                 } header: {
-                    Text("第二步：设置本机主密码（绑定本机安全芯片）")
+                    Text(tr("第二步：设置本机主密码（绑定本机安全芯片）", "Step 2: Set Device Master Password (Secure Enclave)"))
                 } footer: {
-                    Text("恢复后的数据将重新使用本机 Secure Enclave 芯片加密存储，且新主密码必须与备份密码不同。")
+                    Text(tr(
+                        "恢复后的数据将重新使用本机 Secure Enclave 芯片加密存储，且新主密码必须与备份密码不同。",
+                        "Restored cards will be re-encrypted with this device's Secure Enclave. Your new master password must differ from the backup password."
+                    ))
                 }
 
                 if let error = store.errorMessage {
@@ -384,17 +450,17 @@ private struct RestoreFromBackupSheet: View {
                     }
                 }
             }
-            .navigationTitle("从离线备份恢复")
+            .navigationTitle(tr("从离线备份恢复", "Restore from Offline Backup"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+                    Button(tr("取消", "Cancel")) {
                         scrubState()
                         dismiss()
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(store.isBusy ? "解密中..." : "解密恢复") {
+                    Button(store.isBusy ? tr("解密中...", "Decrypting...") : tr("解密恢复", "Decrypt & Restore")) {
                         let bPass = backupPassword
                         let mPass = newMasterPassword
                         Task {

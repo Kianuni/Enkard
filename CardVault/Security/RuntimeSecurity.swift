@@ -34,10 +34,14 @@ struct RuntimeIntegrityReport: Equatable, Sendable {
 
     var summaryText: String {
         if !isCompromised {
-            return antiDebugActive ? "正常（内核反调试已启用 · 无注入库）" : "正常（调试构建 · 无注入库）"
+            return antiDebugActive
+                ? tr("正常（内核反调试已启用 · 无注入库）", "Clean (Kernel Anti-Debug Active · No Injected Dylibs)")
+                : tr("正常（调试构建 · 无注入库）", "Clean (Debug Build · No Injected Dylibs)")
         }
-        let all = anomalies + unexpectedLibraries.map { "检测到非系统动态库：\($0)" }
-        return all.joined(separator: "；")
+        let all = anomalies + unexpectedLibraries.map {
+            tr("检测到非系统动态库：\($0)", "Unexpected non-system dylib: \($0)")
+        }
+        return all.joined(separator: tr("；", "; "))
     }
 }
 
@@ -118,17 +122,26 @@ enum RuntimeSecurity {
                             && !$0.contains("libRPAC.dylib")
                     }
                 if !nonXCTestEntries.isEmpty {
-                    appendUnique(&anomalies, "环境变量存在 DYLD_INSERT_LIBRARIES 动态注入")
+                    appendUnique(&anomalies, tr(
+                        "环境变量存在 DYLD_INSERT_LIBRARIES 动态注入",
+                        "DYLD_INSERT_LIBRARIES dynamic injection detected in environment"
+                    ))
                 }
                 #else
-                appendUnique(&anomalies, "环境变量存在 DYLD_INSERT_LIBRARIES 动态注入")
+                appendUnique(&anomalies, tr(
+                    "环境变量存在 DYLD_INSERT_LIBRARIES 动态注入",
+                    "DYLD_INSERT_LIBRARIES dynamic injection detected in environment"
+                ))
                 #endif
             }
         }
 
         #if !DEBUG
         if isDebuggerAttached() {
-            appendUnique(&anomalies, "检测到调试器附加（P_TRACED）")
+            appendUnique(&anomalies, tr(
+                "检测到调试器附加（P_TRACED）",
+                "Attached debugger detected (P_TRACED)"
+            ))
         }
         #endif
 
@@ -147,7 +160,10 @@ enum RuntimeSecurity {
                 let validated = normalizedSystemPathForAudit(rawDyld)
                 dyldPath = validated.path
                 if validated.hasTraversal {
-                    appendUnique(&anomalies, "检测到动态库路径包含目录穿越伪装")
+                    appendUnique(&anomalies, tr(
+                        "检测到动态库路径包含目录穿越伪装",
+                        "Dylib path contains suspicious directory traversal segments"
+                    ))
                 }
             }
             var dladdrPath = ""
@@ -158,13 +174,19 @@ enum RuntimeSecurity {
                     let validated = normalizedSystemPathForAudit(rawDl)
                     dladdrPath = validated.path
                     if validated.hasTraversal {
-                        appendUnique(&anomalies, "检测到动态库路径包含目录穿越伪装")
+                        appendUnique(&anomalies, tr(
+                            "检测到动态库路径包含目录穿越伪装",
+                            "Dylib path contains suspicious directory traversal segments"
+                        ))
                     }
                 }
             }
 
             if !dyldPath.isEmpty && !dladdrPath.isEmpty && dyldPath != dladdrPath {
-                appendUnique(&anomalies, "检测到 dyld 镜像路径伪造（_dyld_get_image_name 与 dladdr 不一致）")
+                appendUnique(&anomalies, tr(
+                    "检测到 dyld 镜像路径伪造（_dyld_get_image_name 与 dladdr 不一致）",
+                    "dyld image path spoofing detected (_dyld_get_image_name mismatch with dladdr)"
+                ))
             }
 
             let effectivePath = !dladdrPath.isEmpty ? dladdrPath : dyldPath
@@ -172,7 +194,10 @@ enum RuntimeSecurity {
                 let rawHeader = UnsafeRawPointer(headerPtr)
                 if let previousHeader = seenHeadersByPath[effectivePath], previousHeader != rawHeader {
                     let dupBase = (effectivePath as NSString).lastPathComponent
-                    appendUnique(&anomalies, "检测到重复伪装的系统镜像路径（\(dupBase)）")
+                    appendUnique(&anomalies, tr(
+                        "检测到重复伪装的系统镜像路径（\(dupBase)）",
+                        "Duplicate spoofed system image path detected (\(dupBase))"
+                    ))
                 } else {
                     seenHeadersByPath[effectivePath] = rawHeader
                 }
@@ -194,7 +219,10 @@ enum RuntimeSecurity {
                 #endif
                 if !isSimulatorHostShim && !isDebugXCTestInjector {
                     let interposeBase = (effectivePath as NSString).lastPathComponent
-                    appendUnique(&anomalies, "检测到 Mach-O __interpose 符号劫持段（\(interposeBase)）")
+                    appendUnique(&anomalies, tr(
+                        "检测到 Mach-O __interpose 符号劫持段（\(interposeBase)）",
+                        "Mach-O __interpose symbol hijacking section detected (\(interposeBase))"
+                    ))
                 }
             }
 
@@ -220,7 +248,10 @@ enum RuntimeSecurity {
             "/usr/lib/ellekit.dylib",
             "/usr/lib/TweakInject"
         ] where access(jbPath, F_OK) == 0 {
-            appendUnique(&anomalies, "检测到越狱或 Hook 环境路径（\(jbPath)）")
+            appendUnique(&anomalies, tr(
+                "检测到越狱或 Hook 环境路径（\(jbPath)）",
+                "Jailbreak or hook framework path detected (\(jbPath))"
+            ))
             break
         }
 
@@ -325,7 +356,10 @@ enum RuntimeSecurity {
                 }
             }
             #endif
-            appendUnique(&anomalies, "检测到关键函数导入表被运行时重绑定（\(name)）")
+            appendUnique(&anomalies, tr(
+                "检测到关键函数导入表被运行时重绑定（\(name)）",
+                "Runtime GOT import table rebinding detected (\(name))"
+            ))
         }
     }
 
@@ -420,14 +454,20 @@ enum RuntimeSecurity {
               length > 0,
               length < (1 << 36) else {
             #if !targetEnvironment(simulator)
-            appendUnique(&anomalies, "检测到 dyld 共享缓存范围缺失或异常（疑似被 Hook 屏蔽）")
+            appendUnique(&anomalies, tr(
+                "检测到 dyld 共享缓存范围缺失或异常（疑似被 Hook 屏蔽）",
+                "dyld shared cache range missing or invalid (possible hook)"
+            ))
             #endif
             return nil
         }
         let lower = UInt(bitPattern: start)
         let (upper, overflow) = lower.addingReportingOverflow(UInt(length))
         guard !overflow else {
-            appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
+            appendUnique(&anomalies, tr(
+                "检测到 dyld 共享缓存范围被伪造",
+                "Forged dyld shared cache range detected"
+            ))
             return nil
         }
 
@@ -435,14 +475,20 @@ enum RuntimeSecurity {
         // whereas a forged header buffer embedded inside an injected dylib resolves to that dylib's image!
         var startInfo = Dl_info()
         if !isValidSharedCacheHeader(start: start, length: length) || dladdr(start, &startInfo) != 0 {
-            appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
+            appendUnique(&anomalies, tr(
+                "检测到 dyld 共享缓存范围被伪造",
+                "Forged dyld shared cache range detected"
+            ))
             return nil
         }
 
         let range = lower..<upper
         let ownImage = UInt(bitPattern: UnsafeRawPointer(#dsohandle))
         if range.contains(ownImage) {
-            appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
+            appendUnique(&anomalies, tr(
+                "检测到 dyld 共享缓存范围被伪造",
+                "Forged dyld shared cache range detected"
+            ))
             return nil
         }
 
@@ -455,20 +501,29 @@ enum RuntimeSecurity {
             let hdrAddr = UInt(bitPattern: hdr)
             guard range.contains(hdrAddr) else { continue }
             if hdr.pointee.filetype == UInt32(MH_EXECUTE) {
-                appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
+                appendUnique(&anomalies, tr(
+                    "检测到 dyld 共享缓存范围被伪造",
+                    "Forged dyld shared cache range detected"
+                ))
                 return nil
             }
             if let rawName = _dyld_get_image_name(idx) {
                 let checked = normalizedSystemPathForAudit(String(cString: rawName))
                 if checked.hasTraversal || !isTrustedSystemImagePath(checked.path) {
-                    appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
+                    appendUnique(&anomalies, tr(
+                        "检测到 dyld 共享缓存范围被伪造",
+                        "Forged dyld shared cache range detected"
+                    ))
                     return nil
                 }
                 trustedImagesInCache += 1
             }
         }
         if trustedImagesInCache == 0 {
-            appendUnique(&anomalies, "检测到 dyld 共享缓存范围被伪造")
+            appendUnique(&anomalies, tr(
+                "检测到 dyld 共享缓存范围被伪造",
+                "Forged dyld shared cache range detected"
+            ))
             return nil
         }
         return range
@@ -535,12 +590,18 @@ enum RuntimeSecurity {
         for entry in criticalSystemSymbols {
             let symbol = entry.name
             guard let symAddr = dlsym(rtldDefault, symbol) else {
-                appendUnique(&anomalies, "关键系统安全符号缺失（\(symbol)）")
+                appendUnique(&anomalies, tr(
+                    "关键系统安全符号缺失（\(symbol)）",
+                    "Critical system security symbol missing (\(symbol))"
+                ))
                 continue
             }
             var dlInfo = Dl_info()
             guard dladdr(symAddr, &dlInfo) != 0, let rawFname = dlInfo.dli_fname else {
-                appendUnique(&anomalies, "关键系统安全符号来源不可解析（\(symbol)）")
+                appendUnique(&anomalies, tr(
+                    "关键系统安全符号来源不可解析（\(symbol)）",
+                    "Unresolvable origin for critical system security symbol (\(symbol))"
+                ))
                 continue
             }
             let validated = normalizedSystemPathForAudit(String(cString: rawFname))
@@ -549,7 +610,10 @@ enum RuntimeSecurity {
                 ownerPath == prefix || (prefix.hasSuffix("/") && ownerPath.hasPrefix(prefix))
             }
             if validated.hasTraversal || !matchesAllowedUmbrella || !isTrustedSystemImagePath(ownerPath) {
-                appendUnique(&anomalies, "检测到关键系统符号被重定向或 Hook（\(symbol)）")
+                appendUnique(&anomalies, tr(
+                    "检测到关键系统符号被重定向或 Hook（\(symbol)）",
+                    "Critical system symbol redirected or hooked (\(symbol))"
+                ))
             }
         }
     }

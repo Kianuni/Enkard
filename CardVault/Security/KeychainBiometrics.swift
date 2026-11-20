@@ -11,10 +11,10 @@ enum BiometricKind: Sendable {
 
     var displayName: String {
         switch self {
-        case .faceID: return "面容 ID"
-        case .touchID: return "触控 ID"
-        case .opticID: return "视网膜 ID"
-        case .none: return "生物识别"
+        case .faceID: return tr("面容 ID", "Face ID")
+        case .touchID: return tr("触控 ID", "Touch ID")
+        case .opticID: return tr("视网膜 ID", "Optic ID")
+        case .none: return tr("生物识别", "Biometrics")
         }
     }
 
@@ -41,9 +41,15 @@ enum KeychainBiometricError: LocalizedError {
         case .userCancelled:
             return nil
         case .itemNotFound:
-            return "尚未绑定生物识别密钥（或已启用紧急锁定），请输入主密码解锁"
+            return tr(
+                "尚未绑定生物识别密钥（或已启用紧急锁定），请输入主密码解锁",
+                "Biometric unlock key is not enrolled (or Emergency Lockdown is active). Enter your master password."
+            )
         case .keychainFailure(let status):
-            return "安全钥匙串访问失败（状态码：\(status)），请使用主密码解锁"
+            return tr(
+                "安全钥匙串访问失败（状态码：\(status)），请使用主密码解锁",
+                "Keychain access failed (status: \(status)). Please unlock with your master password."
+            )
         }
     }
 }
@@ -104,7 +110,9 @@ enum KeychainBiometrics {
             .biometryCurrentSet,
             &cfError
         ) else {
-            throw KeychainBiometricError.biometricsUnavailable("请先在系统设置中开启锁屏密码与面容/触控 ID")
+            throw KeychainBiometricError.biometricsUnavailable(
+                tr("请先在系统设置中开启锁屏密码与面容/触控 ID", "Please enable a device passcode and Face ID / Touch ID in Settings first.")
+            )
         }
 
         var keyData = key.withUnsafeBytes { Data($0) }
@@ -127,15 +135,16 @@ enum KeychainBiometrics {
         }
     }
 
-    static func loadBiometricDEK(reason: String = "解锁 Enkard 本地加密银行卡包") async throws -> SymmetricKey {
-        try await Task.detached(priority: .userInitiated) {
+    static func loadBiometricDEK(reason: String? = nil) async throws -> SymmetricKey {
+        let promptReason = reason ?? tr("解锁 Enkard 本地加密银行卡包", "Unlock your encrypted Enkard card vault")
+        return try await Task.detached(priority: .userInitiated) {
             let context = LAContext()
-            context.localizedReason = reason
+            context.localizedReason = promptReason
             context.localizedFallbackTitle = ""
 
             var authError: NSError?
             guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &authError) else {
-                let message = authError?.localizedDescription ?? "当前设备生物识别不可用，请输入主密码"
+                let message = authError?.localizedDescription ?? tr("当前设备生物识别不可用，请输入主密码", "Biometrics unavailable on this device. Please enter your master password.")
                 throw KeychainBiometricError.biometricsUnavailable(message)
             }
 

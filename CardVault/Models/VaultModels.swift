@@ -99,7 +99,8 @@ enum IdleLockTimeout: Int, CaseIterable, Identifiable, Codable, Sendable {
     var id: Int { rawValue }
 
     var title: String {
-        "前台无操作 \(rawValue / 60) 分钟后"
+        let minutes = rawValue / 60
+        return tr("前台无操作 \(minutes) 分钟后", minutes == 1 ? "After 1 min of inactivity" : "After \(minutes) mins of inactivity")
     }
 }
 
@@ -113,10 +114,10 @@ enum AutoLockTimeout: Int, CaseIterable, Identifiable, Codable, Sendable {
 
     var title: String {
         switch self {
-        case .immediately: return "立即锁定（最安全）"
-        case .seconds15: return "离开 15 秒后（网购切屏推荐）"
-        case .seconds30: return "离开 30 秒后"
-        case .seconds60: return "离开 1 分钟后"
+        case .immediately: return tr("立即锁定（最安全）", "Immediately (Most Secure)")
+        case .seconds15: return tr("离开 15 秒后（网购切屏推荐）", "After 15s (Recommended for Checkout)")
+        case .seconds30: return tr("离开 30 秒后", "After 30s")
+        case .seconds60: return tr("离开 1 分钟后", "After 1 min")
         }
     }
 }
@@ -130,7 +131,7 @@ enum ClipboardClearDuration: Int, CaseIterable, Identifiable, Codable, Sendable 
     var id: Int { rawValue }
 
     var title: String {
-        "\(rawValue) 秒后自动销毁"
+        tr("\(rawValue) 秒后自动销毁", "Auto-clear after \(rawValue)s")
     }
 }
 
@@ -142,8 +143,8 @@ enum BackupImportMode: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .merge: return "合并导入（保留现有卡片，跳过同卡号）"
-        case .replace: return "覆盖替换（清空现有卡片后导入）"
+        case .merge: return tr("合并导入（保留现有卡片，跳过同卡号）", "Merge (Keep existing, skip duplicate numbers)")
+        case .replace: return tr("覆盖替换（清空现有卡片后导入）", "Replace All (Overwrite existing cards)")
         }
     }
 }

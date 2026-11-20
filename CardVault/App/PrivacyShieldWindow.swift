@@ -101,6 +101,11 @@ final class PrivacyShieldWindowManager {
         setReason(.captured, active: sceneCaptured)
     }
 
+    func refreshLanguage() {
+        guard !reasons.isEmpty else { return }
+        render()
+    }
+
     private func setReason(_ reason: Reason, active: Bool) {
         if active {
             reasons.insert(reason)

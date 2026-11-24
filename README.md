@@ -66,7 +66,7 @@ chmod +x scripts/build_ipa.sh scripts/verify_signed_ipa.sh
 ## 零联网隐私双件套
 
 - **卡包资产（Enkard）**：纯离线、零云同步、绑定 Secure Enclave 硬件安全芯片。
-- **日常输入（[Lokey · 落键](https://kianuni.github.io/Lokey-Audit/)）**：同作者出品的 1:1 原生 iOS 26 手感（零学习适应成本）、0 网络框架与 0 Socket 符号离线全拼/双拼输入法（[零联网源码审计仓](https://github.com/Kianuni/Lokey-Audit) · [55 万词白霜扩展包](https://github.com/Kianuni/lokey-frost-pack)）。
+- **日常输入（[Lokey](https://kianuni.github.io/Lokey-Audit/)）**：同作者出品的 1:1 原生手感（零学习适应成本）、纯离线物理级零联网 iOS 26 键全拼与双拼中文输入法；内置自研「落墨 · Inkstone」引擎（26 键盲打热区自适应校准、双向神经网络长句语义、句内中英混输、OpenCC 词级简繁与本地自造词记忆），源码与二进制均不含任何网络框架或数据采集（[零联网源码审计仓](https://github.com/Kianuni/Lokey-Audit) · [55.3 万词白霜 `.lokeypack`](https://github.com/Kianuni/lokey-frost-pack)）。
 
 ---
 

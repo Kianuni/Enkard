@@ -66,7 +66,7 @@ chmod +x scripts/build_ipa.sh scripts/verify_signed_ipa.sh
 ## Offline Zero-Network Companion Suite
 
 - **Card Storage (Enkard)**: Hardware-bound to Apple Secure Enclave with zero cloud sync or networking code.
-- **Everyday Typing ([Lokey · 落键](https://kianuni.github.io/Lokey-Audit/))**: 1:1 native iOS 26 ergonomics (zero learning curve), physically zero-network Full Pinyin & Shuangpin keyboard with zero networking frameworks or sockets ([Audit Repo](https://github.com/Kianuni/Lokey-Audit) · [553k Rime-Frost Pack](https://github.com/Kianuni/lokey-frost-pack)).
+- **Everyday Typing ([Lokey](https://kianuni.github.io/Lokey-Audit/))**: Pure-offline, physically zero-network iOS 26-key Full Pinyin & Shuangpin Chinese keyboard with 1:1 native ergonomics (zero learning curve), powered by the Inkstone engine (adaptive 26-key heatmap, bidirectional neural sentence semantics, inline CN-EN mixed input, word-level OpenCC & local user-phrase memory)—zero networking frameworks or tracking in source or binaries ([Audit Repo](https://github.com/Kianuni/Lokey-Audit) · [553k Frost Pack](https://github.com/Kianuni/lokey-frost-pack)).
 
 ---
 

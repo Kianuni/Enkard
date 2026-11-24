@@ -5,7 +5,7 @@
 
 **Enkard**（当前版本 `v2.4.0`）是一款专为 iPhone 本地自签打造的原生银行卡与金融卡片保险库。它将你的信用卡、借记卡、虚拟卡敏感信息（卡号、有效期、CVV、PIN、账单地址、账单/还款日等）完全封存在手机物理安全芯片（Secure Enclave）与你的主密码双重保护之下——**不联网、不上云、不申请相机或相册权限**，从根源上消除云端泄露与第三方 SDK 风险。
 
-**简体中文** · [English](README_EN.md) · [📖 完整功能与银行级+安全架构详解](docs/DETAILS.md)
+**简体中文** · [English](README_EN.md) · [📖 完整功能与银行级+安全架构详解](docs/DETAILS.md) · [⌨️ Lokey 零联网输入法](https://kianuni.github.io/Lokey-Audit/)
 
 ---
 
@@ -60,6 +60,13 @@ chmod +x scripts/build_ipa.sh scripts/verify_signed_ipa.sh
 
 - **从 CardSe 无缝升级**：`v2.2.0` 起应用更名为 **Enkard**，Bundle ID（`com.local.cardse.app`）与底层加密存储保持兼容，使用同一证书直接覆盖安装即可无缝保留全部卡片；旧版 `.cardse` / `.cardvault` 备份亦可直接导入。
 - **切勿关闭手机锁屏密码**：硬件密钥绑定 iPhone 锁屏密码（`WhenPasscodeSetThisDeviceOnly`），关闭系统锁屏密码会导致安全芯片永久清除密钥（重置密码或换机前请先导出 `.enkard` 离线备份）。
+
+---
+
+## 零联网隐私双件套
+
+- **卡包资产（Enkard）**：纯离线、零云同步、绑定 Secure Enclave 硬件安全芯片。
+- **日常输入（[Lokey · 落键](https://kianuni.github.io/Lokey-Audit/)）**：同作者出品的 1:1 原生 iOS 26 手感（零学习适应成本）、0 网络框架与 0 Socket 符号离线全拼/双拼输入法（[零联网源码审计仓](https://github.com/Kianuni/Lokey-Audit) · [55 万词白霜扩展包](https://github.com/Kianuni/lokey-frost-pack)）。
 
 ---
 

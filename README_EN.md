@@ -3,7 +3,7 @@
 > **An Offline-Only Private Card Vault Bound to Your iPhone's Secure Enclave**  
 > Zero Networking Code · Zero Cloud Sync · Zero Privacy Permissions · Zero Third-Party Dependencies · Dual-Factor Hardware Cryptography
 
-[简体中文](README.md) · **English** · [📖 Full Feature & Security Architecture Guide](docs/DETAILS_EN.md)
+[简体中文](README.md) · **English** · [📖 Full Feature & Security Architecture Guide](docs/DETAILS_EN.md) · [⌨️ Lokey Zero-Network Keyboard](https://kianuni.github.io/Lokey-Audit/)
 
 **Enkard** (`v2.4.0`) is a native iOS bank and virtual card vault engineered specifically for local sideloading and self-signing. It seals your credit, debit, and virtual card details (card number, expiry date, CVV, legacy PIN, billing address, statement/due cycle, and encrypted notes) behind both your master password and your iPhone's physical **Secure Enclave**—with **no networking, no cloud sync, and no camera or photo library permissions**, eliminating remote leaks and third-party SDK supply-chain exposure at the root.
 
@@ -60,6 +60,13 @@ chmod +x scripts/build_ipa.sh scripts/verify_signed_ipa.sh
 
 - **Seamless Upgrade from CardSe / v2.2 / v2.3**: Bundle ID (`com.local.cardse.app`), Keychain identifiers, Secure Enclave key tags, and local storage remain 100% compatible. Overwrite-install with the same signing certificate to retain all cards and settings seamlessly; legacy `.cardse` and `.cardvault` backups remain importable.
 - **Never Turn Off Your Device Passcode**: Hardware keys use `WhenPasscodeSetThisDeviceOnly`. Disabling your iPhone passcode causes iOS to permanently erase Secure Enclave keys (always export an `.enkard` offline backup before resetting your passcode or switching devices).
+
+---
+
+## Offline Zero-Network Companion Suite
+
+- **Card Storage (Enkard)**: Hardware-bound to Apple Secure Enclave with zero cloud sync or networking code.
+- **Everyday Typing ([Lokey · 落键](https://kianuni.github.io/Lokey-Audit/))**: 1:1 native iOS 26 ergonomics (zero learning curve), physically zero-network Full Pinyin & Shuangpin keyboard with zero networking frameworks or sockets ([Audit Repo](https://github.com/Kianuni/Lokey-Audit) · [553k Rime-Frost Pack](https://github.com/Kianuni/lokey-frost-pack)).
 
 ---
 

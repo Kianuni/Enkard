@@ -63,10 +63,11 @@ chmod +x scripts/build_ipa.sh scripts/verify_signed_ipa.sh
 
 ---
 
-## 零联网隐私双件套
+## 零联网隐私双件套与同作者生态
 
-- **卡包资产（Enkard）**：纯离线、零云同步、绑定 Secure Enclave 硬件安全芯片。
-- **日常输入（[Lokey](https://kianuni.github.io/Lokey-Audit/)）**：同作者出品的 1:1 原生手感（零学习适应成本）、纯离线物理级零联网 iOS 26 键全拼与双拼中文输入法；内置自研「落墨 · Inkstone」引擎（26 键盲打热区自适应校准、双向神经网络长句语义、句内中英混输、OpenCC 词级简繁与本地自造词记忆），源码与二进制均不含任何网络框架或数据采集（[零联网源码审计仓](https://github.com/Kianuni/Lokey-Audit) · [55.3 万词白霜 `.lokeypack`](https://github.com/Kianuni/lokey-frost-pack)）。
+- **卡包资产（Enkard）**：纯离线、零云同步、绑定 Apple Secure Enclave 硬件安全芯片。
+- **日常输入（[Lokey](https://kianuni.github.io/Lokey-Audit/)）**：1:1 复刻 iOS 26 原生手感的物理零联网中文输入法。端侧集成「落墨」全拼/双拼引擎与密码框自动隔离，宿主与键盘扩展均实现 `0` 网络框架、`0` Socket 符号，18 份核心源码公开可审（[TestFlight 体验](https://testflight.apple.com/join/Bx9gxXTN) · [零联网审计仓](https://github.com/Kianuni/Lokey-Audit) · [55.3 万词白霜包](https://github.com/Kianuni/lokey-frost-pack)）。
+- **更多开源工具**：[WQGuard](https://github.com/Kianuni/WQGuard) · [Erosion-CN](https://github.com/Kianuni/Erosion-CN) · [AppleFlow](https://github.com/Kianuni/AppleFlow) · [AppleLens](https://github.com/Kianuni/AppleLens) · [Camlo · 开幕](https://github.com/Kianuni/Camlo)
 
 ---
 

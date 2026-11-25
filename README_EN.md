@@ -63,10 +63,11 @@ chmod +x scripts/build_ipa.sh scripts/verify_signed_ipa.sh
 
 ---
 
-## Offline Zero-Network Companion Suite
+## Offline Zero-Network Suite & Ecosystem
 
-- **Card Storage (Enkard)**: Hardware-bound to Apple Secure Enclave with zero cloud sync or networking code.
-- **Everyday Typing ([Lokey](https://kianuni.github.io/Lokey-Audit/))**: Pure-offline, physically zero-network iOS 26-key Full Pinyin & Shuangpin Chinese keyboard with 1:1 native ergonomics (zero learning curve), powered by the Inkstone engine (adaptive 26-key heatmap, bidirectional neural sentence semantics, inline CN-EN mixed input, word-level OpenCC & local user-phrase memory)—zero networking frameworks or tracking in source or binaries ([Audit Repo](https://github.com/Kianuni/Lokey-Audit) · [553k Frost Pack](https://github.com/Kianuni/lokey-frost-pack)).
+- **Card Storage (Enkard)**: Hardware-bound to the Apple Secure Enclave with zero cloud sync or networking code.
+- **Everyday Typing ([Lokey](https://kianuni.github.io/Lokey-Audit/))**: Physically zero-network iOS 26-key Full Pinyin & Shuangpin keyboard with 1:1 native feel, on-device Inkstone decoding, and automatic secure-field isolation—zero networking frameworks or socket symbols across host and extension ([TestFlight](https://testflight.apple.com/join/Bx9gxXTN) · [Audit Repo](https://github.com/Kianuni/Lokey-Audit) · [553k Frost Pack](https://github.com/Kianuni/lokey-frost-pack)).
+- **More Open-Source Works**: [WQGuard](https://github.com/Kianuni/WQGuard) · [Erosion-CN](https://github.com/Kianuni/Erosion-CN) · [AppleFlow](https://github.com/Kianuni/AppleFlow) · [AppleLens](https://github.com/Kianuni/AppleLens) · [Camlo](https://github.com/Kianuni/Camlo)
 
 ---
 
